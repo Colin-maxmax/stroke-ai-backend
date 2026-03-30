@@ -2860,18 +2860,49 @@ function getCurrentAssessmentContext() {
 
 // 流式获取 AI 回答并显示
 async function streamAIResponse(question, onChunk, onComplete) {
-    const assessmentContext = getCurrentAssessmentContext();
+    // 获取用户评估数据（用于个性化提示）
+    const assessment = getCurrentAssessmentContext();
+
+    // 构建系统提示词（结合用户信息）
+    let systemPrompt = `你是一位专业的脑卒中健康顾问，服务于粤北地区（韶关、清远、河源等）。
+请用亲切、通俗的语言回答，像关心长辈一样。
+回答要简洁明了，避免长段落。
+涉及医学建议时，提醒用户咨询专业医生。
+对于紧急情况（如突然中风症状），立即建议拨打120。`;
+
+    if (assessment && assessment.age) {
+        systemPrompt += `\n\n当前用户信息：
+- 年龄：${assessment.age}岁
+- 风险等级：${assessment.riskLevel || '未知'}
+- 主要风险因素：${(assessment.riskFactors || []).join('、') || '无'}
+- 是否有高血压：${assessment.hypertension ? '是' : '否'}`;
+    }
+
+    // 构建符合百炼 API 的请求体
+    const requestBody = {
+        model: 'deepseek-r1',   // 或 'deepseek-v3'
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: question }
+        ],
+        stream: true,
+        max_tokens: 1000,
+        temperature: 0.7
+    };
+
     try {
         const response = await fetch(AI_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: question,
-                assessment: assessmentContext
-            })
+            body: JSON.stringify(requestBody)
         });
 
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+            // 尝试读取错误详情
+            const errorText = await response.text();
+            console.error('后端返回错误:', errorText);
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -2889,17 +2920,11 @@ async function streamAIResponse(question, onChunk, onComplete) {
                     if (dataStr === '[DONE]') continue;
                     try {
                         const data = JSON.parse(dataStr);
-                        if (data.error) {
-                            onChunk?.(`[错误] ${data.error}`);
-                            return;
-                        }
-                        if (data.content) {
-                            fullText += data.content;
-                            onChunk?.(data.content);
-                        }
-                        if (data.done) {
-                            onComplete?.(fullText);
-                            return;
+                        // 百炼 API 返回格式与 OpenAI 一致
+                        const content = data.choices?.[0]?.delta?.content;
+                        if (content) {
+                            fullText += content;
+                            onChunk(content);
                         }
                     } catch (e) {
                         // 忽略解析错误
@@ -2907,10 +2932,11 @@ async function streamAIResponse(question, onChunk, onComplete) {
                 }
             }
         }
-        onComplete?.(fullText);
+        onComplete(fullText);
     } catch (error) {
         console.error('AI请求失败:', error);
         onChunk?.('网络错误，请稍后再试。');
+        onComplete?.('网络错误，请稍后再试。');
     }
 }
 
