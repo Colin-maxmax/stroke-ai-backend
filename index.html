@@ -2861,11 +2861,13 @@ function getCurrentAssessmentContext() {
 // 流式获取 AI 回答并显示
 async function streamAIResponse(question, onChunk, onComplete) {
     const assessment = getCurrentAssessmentContext();
+
     let systemPrompt = `你是一位专业的脑卒中健康顾问，服务于粤北地区（韶关、清远、河源等）。
 请用亲切、通俗的语言回答，像关心长辈一样。
 回答要简洁明了，避免长段落。
 涉及医学建议时，提醒用户咨询专业医生。
 对于紧急情况（如突然中风症状），立即建议拨打120。`;
+
     if (assessment && assessment.age) {
         systemPrompt += `\n\n当前用户信息：
 - 年龄：${assessment.age}岁
@@ -2873,23 +2875,31 @@ async function streamAIResponse(question, onChunk, onComplete) {
 - 主要风险因素：${(assessment.riskFactors || []).join('、') || '无'}
 - 是否有高血压：${assessment.hypertension ? '是' : '否'}`;
     }
+
     const requestBody = {
         model: 'deepseek-r1',
         messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: question }
         ],
-        stream: false,
+        stream: false,      // 非流式
         max_tokens: 1000,
         temperature: 0.7
     };
+
     try {
         const response = await fetch(AI_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody)
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('后端返回错误:', errorText);
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
         const data = await response.json();
         const fullText = data.content || '抱歉，未能获取回答。';
         onChunk(fullText);
