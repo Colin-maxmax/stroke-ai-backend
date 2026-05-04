@@ -865,7 +865,27 @@
 					<option value="从未工作">从未工作</option>
 				  </select>
 				</div>
-				
+
+			    <div class="form-group">
+			      <label class="form-label">学历</label>
+			      <select id="education" class="form-control">
+			        <option value="小学及以下">小学及以下</option>
+			        <option value="初中">初中</option>
+			        <option value="高中/中专">高中/中专</option>
+			        <option value="大专及以上">大专及以上</option>
+			      </select>
+			    </div>
+
+				<div class="form-group">
+			      <label class="form-label">家庭人均月收入</label>
+			      <select id="monthlyIncome" class="form-control">
+			        <option value="<2000">&lt;2000元</option>
+			        <option value="2000-5000">2000-5000元</option>
+			        <option value="5000-10000">5000-10000元</option>
+			        <option value=">10000">&gt;10000元</option>
+			      </select>
+			    </div>
+				  
 				<div class="form-group">
 				  <label class="form-label" for="residenceType">居住地类型</label>
 				  <select id="residenceType" class="form-control" required>
@@ -889,12 +909,22 @@
 					<option value="1">是</option>
 				  </select>
 				</div>
-				
+
+				<div class="form-group" style="grid-column: span 2;">
+				  <label class="form-label">其他疾病（可多选）</label>
+				  <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 8px;">
+				    <label><input type="checkbox" id="hyperuricemia"> 高尿酸血症</label>
+				    <label><input type="checkbox" id="anemia"> 贫血</label>
+				    <label><input type="checkbox" id="mentalIllness"> 心理疾病</label>
+				  </div>
+				</div>
+				  
 				<div class="form-group">
-				  <label class="form-label" for="heartDisease">是否有心脏病</label>
-				  <select id="heartDisease" class="form-control" required>
-					<option value="0">否</option>
-					<option value="1">是</option>
+			      <label class="form-label">心脏病类型</label>
+			      <select id="heartDiseaseType" class="form-control">
+			        <option value="0">无心脏病</option>
+			        <option value="1">房颤或心梗</option>
+			        <option value="2">其他心脏病</option>
 				  </select>
 				</div>
 			  </div>
@@ -938,7 +968,7 @@
 				</div>
 			  </div>
 			</div>
-		
+			  
 			<!-- 临床指标部分 -->
 			<div style="margin-bottom: 25px; padding-bottom: 15px; border-bottom: 2px solid #f0f0f0;">
 			  <h4 style="color: #2c3e50; margin-bottom: 15px;">临床指标</h4>
