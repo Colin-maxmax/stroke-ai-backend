@@ -1735,243 +1735,209 @@ document.getElementById('patientAge').addEventListener('input', checkExerciseRis
 document.getElementById('workType').addEventListener('change', checkExerciseRisk);
 document.getElementById('exerciseFrequency').addEventListener('change', checkExerciseRisk);
 	
-    // 处理评估提交（基于模型设计的改进版）
+
+// 处理评估提交（基于18项特征随机森林模型）
 function handleAssessmentSubmit(e) {
   e.preventDefault();
   
-  // 收集所有表单数据
+  // ========== 收集所有表单数据（18项特征）==========
   const patientName = document.getElementById('patientName').value.trim();
   const age = parseInt(document.getElementById('patientAge').value);
   const gender = document.getElementById('patientGender').value;
-  const everMarried = document.getElementById('everMarried').value;
+  const everMarried = document.getElementById('everMarried').value;   // 保留但不参与评分
   const workType = document.getElementById('workType').value;
   const residenceType = document.getElementById('residenceType').value;
   const hypertension = document.getElementById('hypertension').value === '1';
-  const heartDisease = document.getElementById('heartDisease').value === '1';
+
+  // 新增字段
+  const education = document.getElementById('education').value;
+  const monthlyIncome = document.getElementById('monthlyIncome').value;
+  const heartDiseaseType = document.getElementById('heartDiseaseType').value; // "0","1","2"
+  const hyperuricemia = document.getElementById('hyperuricemia').checked;
+  const anemia = document.getElementById('anemia').checked;
+  const mentalIllness = document.getElementById('mentalIllness').checked;
+
+  // 临床指标
   const systolicBP = parseInt(document.getElementById('systolicBP').value);
   const diastolicBP = parseInt(document.getElementById('diastolicBP').value);
-  const avgGlucoseLevel = parseFloat(document.getElementById('avgGlucoseLevel').value); // mmol/L
+  const avgGlucoseLevel = parseFloat(document.getElementById('avgGlucoseLevel').value);
   const height = document.getElementById('patientHeight').value ? parseFloat(document.getElementById('patientHeight').value) : null;
   const weight = document.getElementById('patientWeight').value ? parseFloat(document.getElementById('patientWeight').value) : null;
+
+  // 生活习惯
   const smokingStatus = document.getElementById('smokingStatus').value;
   const exerciseFrequency = document.getElementById('exerciseFrequency').value;
-  const notes = '';
+  const drinkingStatus = document.getElementById('drinkingStatus').value;
+
+  // 中风相关病史
   const strokeHistory = document.getElementById('strokeHistory').value === '1';
   const tiaHistory = document.getElementById('tiaHistory').value === '1';
   const strokeFamilyHistory = document.getElementById('strokeFamilyHistory').value;
   const hyperlipidemia = document.getElementById('hyperlipidemia').value === '1';
-   const drinkingStatus = document.getElementById('drinkingStatus').value;
-  const dietaryHabitSelect = document.getElementById('dietaryHabit');
-  
-     // 获取多选的膳食习惯
-	const selectedDietaryHabits = [];
-	document.querySelectorAll('input[name="dietaryHabit"]:checked').forEach(checkbox => {
-	  selectedDietaryHabits.push(checkbox.value);
-	});
 
-	// 判断是否有不健康膳食
-	const hasUnhealthyDiet = selectedDietaryHabits.some(habit => 
-	  ['高盐', '高油', '高糖', '蔬菜不足', '水果不足'].includes(habit)
-	);
-  
+  // 膳食习惯
+  const selectedDietaryHabits = [];
+  document.querySelectorAll('input[name="dietaryHabit"]:checked').forEach(checkbox => {
+    selectedDietaryHabits.push(checkbox.value);
+  });
+  const hasUnhealthyDiet = selectedDietaryHabits.some(habit => 
+    ['高盐', '高油', '高糖', '蔬菜不足', '水果不足'].includes(habit)
+  );
+
+  // BMI 计算
   let bmi = null;
   if (height && weight && height > 0 && weight > 0) {
     const heightInMeters = height / 100;
     bmi = weight / (heightInMeters * heightInMeters);
-    bmi = Math.round(bmi * 10) / 10; // 保留一位小数
+    bmi = Math.round(bmi * 10) / 10;
   }
-  
-  // ========== 风险权重计算 ==========
-  
-  // 收集风险因素
-  const riskFactors = [];
+
+  // 为兼容旧记录，生成一个 legacy heartDisease 字段
+  const heartDiseaseLegacy = heartDiseaseType !== '0';
+
+  // ========== 风险权重计算（基于随机森林18项特征重要性）==========
   let riskScore = 0;
-  
-  // ========== 1. 核心病史因素（最高权重，按模型重要性） ==========
-  
-  // 1.1 中风/脑缺血病史 - 模型最重要特征
-  if (strokeHistory || tiaHistory) {
-    riskScore += 40; // 最高权重
+  let riskFactors = [];
+
+  // 1. 中风/短暂性脑缺血病史（最重要 38分）
+  const hasStrokeOrTIA = strokeHistory || tiaHistory;
+  if (hasStrokeOrTIA) {
+    riskScore += 38;
     if (strokeHistory) riskFactors.push('中风病史');
     if (tiaHistory) riskFactors.push('短暂性脑缺血病史');
   }
-  
-  // 1.2 高血压病史 - 模型第二重要
-  if (hypertension) {
-    riskScore += 25;
-    riskFactors.push('高血压病史');
-  }
-  
-  // 1.3 心脏病史 - 模型第三重要
-  if (heartDisease) {
-    riskScore += 20;
-    riskFactors.push('心脏病史');
-  }
-  
-  // 1.4 糖尿病史判断（基于空腹血糖，mmol/L标准）- 模型第四重要
+
+  // 2. 糖尿病史（血糖≥7.0，28分）
   const hasDiabetes = avgGlucoseLevel >= 7.0;
   if (hasDiabetes) {
-    riskScore += 18;
+    riskScore += 28;
     riskFactors.push('糖尿病史');
   }
-  
-  // 1.5 高血脂病史 - 模型第五重要
-  if (hyperlipidemia) {
+
+  // 3. 职业（政府工作/从未工作，16分）
+  if (workType === '政府工作' || workType === '从未工作') {
     riskScore += 16;
-    riskFactors.push('高血脂病史');
+    riskFactors.push(`职业风险（${workType}）`);
   }
-  
-  // 1.6 脑卒中家族史 - 重要但权重稍低
-	if (strokeFamilyHistory !== '0') {
-		riskScore += 10; // 原10→12，提升重要性
-		const familyLevel = strokeFamilyHistory === '1' ? '一级亲属' : '二级亲属';
-		riskFactors.push(`脑卒中家族史（${familyLevel}）`);
-	}
-  
-  // ========== 2. 临床指标（中等权重） ==========
-  
-  // 2.1 血压分级
-  if (systolicBP >= 180 || diastolicBP >= 110) {
-    riskScore += 15; // 3级高血压
-    if (!hypertension) riskFactors.push('重度高血压');
-  } else if (systolicBP >= 160 || diastolicBP >= 100) {
-    riskScore += 10; // 2级高血压
-    if (!hypertension) riskFactors.push('中度高血压');
-  } else if (systolicBP >= 140 || diastolicBP >= 90) {
-    riskScore += 7; // 1级高血压
-    if (!hypertension) riskFactors.push('轻度高血压');
-  } else if (systolicBP >= 130 || diastolicBP >= 85) {
-    riskScore += 3; // 正常高值
+
+  // 4. 高血压病史（22分）
+  if (hypertension) {
+    riskScore += 22;
+    riskFactors.push('高血压病史');
   }
-  
-  // 2.2 高血压合并因素
-  if (hypertension && age >= 40) {
-    riskScore += 4;
-    riskFactors.push('中年高血压');
+
+  // 5. 年龄分层（最高15分）
+  if (age >= 75) riskScore += 15;
+  else if (age >= 65) riskScore += 12;
+  else if (age >= 55) riskScore += 9;
+  else if (age >= 45) riskScore += 6;
+  else if (age >= 35) riskScore += 3;
+
+  // 6. 家庭人均月收入（低风险 12分）
+  if (monthlyIncome === '<2000') riskScore += 12;
+  else if (monthlyIncome === '2000-5000') riskScore += 7;
+
+  // 7. 学历（小学及以下 10分）
+  if (education === '小学及以下') riskScore += 10;
+  else if (education === '初中') riskScore += 6;
+
+  // 8. 房颤/心梗/其他心脏病（房颤14分，其他6分）
+  if (heartDiseaseType === '1') {
+    riskScore += 14;
+    riskFactors.push('房颤或心梗史');
+  } else if (heartDiseaseType === '2') {
+    riskScore += 6;
+    riskFactors.push('其他心脏病');
   }
-  
-  if (hypertension && (smokingStatus === '目前吸烟' || smokingStatus === '以前吸烟')) {
-    riskScore += 3;
-    riskFactors.push('高血压合并吸烟');
-  }
-  
-  // 2.3 血糖水平分级（mmol/L标准）
-  if (!hasDiabetes) {
-    if (avgGlucoseLevel >= 11.1) {
-      riskScore += 6; // 严重高血糖
-      riskFactors.push('严重高血糖');
-    } else if (avgGlucoseLevel >= 7.0) {
-      riskScore += 4; // 糖尿病
-      riskFactors.push('糖尿病');
-    } else if (avgGlucoseLevel >= 6.1) {
-      riskScore += 2; // 糖尿病前期
-      riskFactors.push('糖尿病前期');
-    } else if (avgGlucoseLevel >= 5.6) {
-      riskScore += 1; // 空腹血糖受损
-    } else if (avgGlucoseLevel < 3.9) {
-      riskScore += 3; // 低血糖
-      riskFactors.push('低血糖');
-    }
-  }
-  
-  // 2.4 体重指数BMI
-	if (bmi) {
-		if (bmi >= 28) {
-			riskScore += 12; // 原6→12，大幅提升（肥胖）
-			riskFactors.push('肥胖（BMI≥28）');
-		} else if (bmi >= 24) {
-			riskScore += 8; // 原4→8，提升（超重）
-			riskFactors.push('超重（BMI 24-27.9）');
-		} else if (bmi >= 18.5) {
-			riskScore += 0; // 正常范围无风险分
-		} else {
-			riskScore += 2; // 偏瘦也有一定风险
-			riskFactors.push('体重偏瘦');
-		}
-	}
-  
-  // ========== 3. 生活习惯因素（较低权重） ==========
-  
-  // 3.1 吸烟情况
-  if (smokingStatus === '目前吸烟') {
+
+  // 9. 运动缺乏（10分）
+  const lackOfExercise = exerciseFrequency === '无运动' || 
+                         (age > 50 && exerciseFrequency === '少量运动');
+  if (lackOfExercise) {
     riskScore += 10;
+    riskFactors.push('运动缺乏');
+  }
+
+  // 10. 高血脂（9分）
+  if (hyperlipidemia) {
+    riskScore += 9;
+    riskFactors.push('高血脂');
+  }
+
+  // 11. 吸烟（目前吸烟8分，以前吸烟4分）
+  if (smokingStatus === '目前吸烟') {
+    riskScore += 8;
     riskFactors.push('目前吸烟');
   } else if (smokingStatus === '以前吸烟') {
     riskScore += 4;
     riskFactors.push('以前吸烟');
   }
-  
-  // 3.2 运动缺乏判断
-	  const lackOfExercise = exerciseFrequency === '无运动' || 
-							exerciseFrequency === '少量运动' ||
-							age > 50 ||
-							(workType === '政府工作' || workType === '从未工作');
-	  
-	  if (lackOfExercise) {
-		riskScore += 8; 
-		riskFactors.push('运动缺乏');
-	  }
-  
-	// 3.3 饮酒因素
-	  if (drinkingStatus === '经常饮酒' || drinkingStatus === '过量饮酒') {
-		riskScore += 6;
-		riskFactors.push('经常饮酒');
-	  }
-  
-	//3.4 膳食因素
-	  if (hasUnhealthyDiet) {
-		riskScore += 4;
-		riskFactors.push('不健康膳食');
-	  }
-  
-	if (selectedDietaryHabits.length > 0) {
-    riskFactors.push(...selectedDietaryHabits.filter(h => h !== '均衡'));
+
+  // 12. 脑卒中家族史（7分）
+  if (strokeFamilyHistory !== '0') {
+    riskScore += 7;
+    const familyLevel = strokeFamilyHistory === '1' ? '一级亲属' : '二级亲属';
+    riskFactors.push(`脑卒中家族史（${familyLevel}）`);
   }
-  
-  // ========== 4. 人口学因素（最低权重） ==========
-  
-  // 4.1 年龄因素
-  if (age >= 75) riskScore += 10;
-  else if (age >= 65) riskScore += 8;
-  else if (age >= 55) riskScore += 6;
-  else if (age >= 45) riskScore += 4;
-  else if (age >= 35) riskScore += 2;
-  
-  // 4.2 性别因素
-  if (gender === '男') riskScore += 1;
-  
-  // 4.3 其他社会因素
-  if (everMarried === '否') riskScore += 0.5;
-  if (workType === '私营' || workType === '个体经营') riskScore += 0.5;
-  if (residenceType === '农村') riskScore += 0.5;
-  
-  // ========== 风险等级判定（调整阈值） ==========
+
+  // 13. 超重/肥胖 BMI（肥胖7分，超重5分）
+  if (bmi) {
+    if (bmi >= 28) {
+      riskScore += 7;
+      riskFactors.push('肥胖（BMI≥28）');
+    } else if (bmi >= 24) {
+      riskScore += 5;
+      riskFactors.push('超重（BMI 24-27.9）');
+    }
+  }
+
+  // 14. 居住地农村（4分）
+  if (residenceType === '农村') riskScore += 4;
+
+  // 15. 高尿酸血症（4分）
+  if (hyperuricemia) {
+    riskScore += 4;
+    riskFactors.push('高尿酸血症');
+  }
+
+  // 16. 贫血（3分）
+  if (anemia) {
+    riskScore += 3;
+    riskFactors.push('贫血');
+  }
+
+  // 17. 心理疾病（3分）
+  if (mentalIllness) {
+    riskScore += 3;
+    riskFactors.push('心理疾病');
+  }
+
+  // 18. 血压/血糖附加修正（额外加分，不占主要权重）
+  if (systolicBP >= 180 || diastolicBP >= 110) riskScore += 5;
+  else if (systolicBP >= 160 || diastolicBP >= 100) riskScore += 3;
+  if (avgGlucoseLevel >= 6.1 && avgGlucoseLevel < 7.0) riskScore += 3;  // 糖尿病前期
+  if (avgGlucoseLevel >= 11.1) riskScore += 4;  // 严重高血糖
+
+  // 截断总分最高100
+  let normalizedScore = Math.min(riskScore, 100);
+
+  // ========== 风险等级判定（阈值微调，匹配模型性能）==========
   let riskLevel, probability;
-  const normalizedScore = Math.min(riskScore, 100);
-  
-  // 调整后的阈值
   if (normalizedScore >= 60) {
     riskLevel = '高风险';
-    probability = 0.5 + (normalizedScore - 60) * 0.01;
+    probability = 0.5 + (normalizedScore - 60) * 0.012;
   } else if (normalizedScore >= 40) {
     riskLevel = '中风险';
-    probability = 0.15 + (normalizedScore - 40) * 0.0175;
-  } else if (normalizedScore >= 20) {
-    riskLevel = '低风险';
-    probability = 0.02 + (normalizedScore - 20) * 0.0065;
+    probability = 0.15 + (normalizedScore - 40) * 0.012;
   } else {
-    riskLevel = '极低风险';
-    probability = 0.01;
+    riskLevel = '低风险';
+    probability = 0.02 + (normalizedScore / 200);
   }
-  
-  // 确保概率不超过模型准确率
   probability = Math.min(probability, 0.9834);
-  
-  // 格式化概率为百分比
   const probabilityPercent = (probability * 100).toFixed(1);
-  
-  // 创建评估对象
-   const assessment = {
+
+  // ========== 创建评估对象 ==========
+  const assessment = {
     id: Date.now().toString(),
     patientName,
     age,
@@ -1980,7 +1946,8 @@ function handleAssessmentSubmit(e) {
     workType,
     residenceType,
     hypertension,
-    heartDisease,
+    heartDisease: heartDiseaseLegacy,        // 兼容旧数据
+    heartDiseaseType: heartDiseaseType,      // 新增字段保存
     strokeHistory,
     tiaHistory,
     strokeFamilyHistory,
@@ -1992,36 +1959,44 @@ function handleAssessmentSubmit(e) {
     weight,
     bmi,
     smokingStatus,
-    drinkingStatus, // 添加饮酒状态
-    exerciseFrequency: document.getElementById('exerciseFrequency').value, // 添加运动频率
-    dietaryHabits: selectedDietaryHabits, // 添加膳食习惯
+    drinkingStatus,
+    exerciseFrequency,
+    dietaryHabits: selectedDietaryHabits,
+    education,           // 保存学历
+    monthlyIncome,       // 保存收入
+    hyperuricemia,
+    anemia,
+    mentalIllness,
     riskFactors,
     riskScore: Math.round(riskScore * 10) / 10,
     riskLevel,
     probability: probabilityPercent,
-    notes,
+    notes: '',
     date: new Date().toISOString(),
     assessedBy: JSON.parse(sessionStorage.getItem('currentUser')).username,
     modelInfo: {
-      accuracy: "98.34%",
-      dataSource: "粤北五市1001份样本",
-      algorithm: "随机森林",
-      scoringBasedOn: "表单输入数据"
+      accuracy: "98.07%",
+      precision: "98.44%",
+      recall: "90.00%",
+      f1: "94.03%",
+      dataSource: "粤北五市1300+样本 (18项特征)",
+      algorithm: "随机森林"
     }
   };
-  
+
   // 保存评估记录
   const allAssessments = getAllAssessments();
   allAssessments.unshift(assessment);
   saveAssessments(allAssessments);
-  
+
   // 关闭模态框
   document.getElementById('assessmentModal').style.display = 'none';
   document.getElementById('assessmentForm').reset();
-  
+  document.getElementById('bmiDisplayContainer').style.display = 'none';
+
   // 显示详细结果
   showAlert(`风险评估完成！风险等级：${riskLevel}，患病概率：${probabilityPercent}%`, 'success');
-  
+
   // 如果高风险，显示额外警告
   if (riskLevel === '高风险') {
     setTimeout(() => {
@@ -2030,14 +2005,13 @@ function handleAssessmentSubmit(e) {
       );
       const factorText = highRiskFactors.length > 0 ? 
         `主要风险因素：${highRiskFactors.slice(0, 5).join('、')}${highRiskFactors.length > 5 ? '等' : ''}` : '';
-      
       showAlert(
         `⚠️ ${patientName} 被评估为高风险（概率${probabilityPercent}%），${factorText}建议尽快就医检查！`, 
         'error'
       );
     }, 1000);
   }
-  
+
   // 重新加载评估记录
   loadAssessments();
 }
