@@ -1,6 +1,15 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+	<script src="https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js"></script>
+	<script>
+	  const app = cloudbase.init({
+	  env: "stroke-platform-d3f493hf68371622", // 请确认这里填的是你的环境 ID
+	  region: "ap-shanghai", // 如果你的环境在其它地域，记得同步修改
+	  });
+	  const db = app.database();
+	  const auth = app.auth();
+	</script>
   <meta charset="utf-8">
   <title>脑卒中预测高危风险平台</title>
   <meta name="keywords" content="脑卒中预测,健康风险评估,健康管理">
@@ -711,6 +720,7 @@
         <div class="form-group">
           <label class="form-label" for="regPassword">设置密码</label>
           <input type="password" id="regPassword" class="form-input" placeholder="请设置您的密码">
+		  <div id="passwordStrength" style="font-size: 12px; margin-top: 5px;"></div>
         </div>
         
         <div class="form-group">
@@ -1243,83 +1253,75 @@
     }
     
     // 登录功能
-    function login() {
+	async function login() {
 	  const username = document.getElementById('username').value.trim();
 	  const password = document.getElementById('password').value.trim();
 
-	  if (!username) {
-		showMessage('loginMessage', '请输入账号', 'error');
+	  if (!username || !password) {
+		showMessage('loginMessage', '请输入用户名和密码', 'error');
 		return;
 	  }
-	  if (!password) {
-		showMessage('loginMessage', '请输入密码', 'error');
-		return;
+		const email = username.includes('@') ? username : username + '@strokefake.com';
+	  try {
+		// 直接使用用户名密码登录
+		const userCredential = await auth.signInWithEmailAndPassword(email, password);
+		const user = userCredential.user;
+		const doc = await db.collection('users').doc(user.uid).get();
+		const userData = doc.data();
+		sessionStorage.setItem('currentUser', JSON.stringify({
+		  uid: user.uid,
+		  username: userData?.username || username
+		}));
+		showMessage('loginMessage', '登录成功', 'success');
+		setTimeout(() => hideEntryPage(), 1000);
+	  } catch (err) {
+		showMessage('loginMessage', '用户名或密码错误', 'error');
 	  }
-
-	  const user = findUser(username);
-	  if (!user) {
-		showMessage('loginMessage', '账号不存在，请先注册', 'error');
-		return;
-	  }
-	  if (user.password !== password) {
-		showMessage('loginMessage', '密码错误，请重试', 'error');
-		return;
-	  }
-
-	  showMessage('loginMessage', '登录成功，正在进入系统...', 'success');
-	  sessionStorage.setItem('currentUser', JSON.stringify({
-		username: user.username,
-		loginTime: new Date().toISOString()
-	  }));
-
-	  const loginBtn = document.getElementById('loginBtn');
-	  loginBtn.disabled = true;
-	  loginBtn.textContent = '登录中...';
-
-	  setTimeout(() => {
-		hideEntryPage();
-	  }, 2000);
 	}
     
     // 注册功能
-	function register() {
+	async function register() {
 	  const username = document.getElementById('regUsername').value.trim();
 	  const password = document.getElementById('regPassword').value.trim();
-	  const confirmPassword = document.getElementById('confirmPassword').value.trim();
+	  const confirm = document.getElementById('confirmPassword').value.trim();
 
-	  if (!username) {
-		showMessage('registerMessage', '请输入账号', 'error');
+	  if (!username || !password || password !== confirm) {
+		showMessage('registerMessage', '用户名/密码无效或两次密码不一致', 'error');
 		return;
 	  }
-	  if (!password) {
-		showMessage('registerMessage', '请输入密码', 'error');
-		return;
-	  }
-	  if (!confirmPassword) {
-		showMessage('registerMessage', '请确认密码', 'error');
-		return;
-	  }
-	  if (password !== confirmPassword) {
-		showMessage('registerMessage', '两次输入的密码不一致', 'error');
-		return;
-	  }
-	  if (findUser(username)) {
-		showMessage('registerMessage', '该账号已存在，请使用其他账号', 'error');
+	  if (password.length < 6) {
+		showMessage('registerMessage', '密码长度至少6位', 'error');
 		return;
 	  }
 
-	  addUser(username, password);
-	  showMessage('registerMessage', '注册成功！请返回登录', 'success');
+	  // 使用一个固定的内部邮箱（实际不会收到邮件）
+	  const fakeEmail = `${Date.now()}_${username}@strokefake.com`;
 
-	  const registerBtn = document.getElementById('registerBtn');
-	  registerBtn.disabled = true;
-	  registerBtn.textContent = '注册成功';
+	  try {
+		// 1. 用虚拟邮箱注册（必须走邮箱通道）
+		const userCredential = await auth.signUpWithEmailAndPassword(fakeEmail, password);
+		const user = userCredential.user;
 
-	  setTimeout(() => {
-		showLoginForm();
-		registerBtn.disabled = false;
-		registerBtn.textContent = '注册';
-	  }, 3000);
+		// 2. 立即绑定用户名（关键步骤）
+		await auth.currentUser.updateUsername({ username: username });
+
+		// 3. 保存用户信息到数据库
+		await db.collection('users').doc(user.uid).set({
+		  username: username,
+		  email: fakeEmail,
+		  createdAt: new Date()
+		});
+
+		sessionStorage.setItem('currentUser', JSON.stringify({ uid: user.uid, username: username }));
+		showMessage('registerMessage', '注册成功', 'success');
+		setTimeout(() => hideEntryPage(), 1000);
+	  } catch (err) {
+		let msg = err.message;
+		if (msg.includes('email-already-exists')) msg = '该用户名已被注册';
+		else if (msg.includes('weak-password')) msg = '密码强度太弱（至少6位）';
+		else if (msg.includes('username-already-exists')) msg = '该用户名已被注册';
+		showMessage('registerMessage', msg, 'error');
+	  }
 	}
     
     // 入口页面功能
@@ -1386,22 +1388,28 @@
     }
     
     // 加载评估记录
-    function loadAssessments() {
-      const assessments = getAllAssessments();
-      const filterValue = document.getElementById('riskFilter').value;
-      
-      // 筛选评估记录
-      let filteredAssessments = assessments;
-      if (filterValue !== '全部') {
-        filteredAssessments = assessments.filter(assessment => assessment.riskLevel === filterValue);
-      }
-      
-      // 渲染评估记录
-      renderAssessments(filteredAssessments);
-      
-      // 更新统计信息
-      updateStats(assessments);
-    }
+	async function loadAssessments() {
+	  const user = auth.currentUser;
+	  if (!user) return;
+	  try {
+		const res = await db.collection('users').doc(user.uid)
+		  .collection('assessments')
+		  .orderBy('date', 'desc')
+		  .get();
+		const assessments = res.data.map(doc => ({ ...doc, id: doc._id }));
+		// 原有的筛选和渲染逻辑
+		const filterValue = document.getElementById('riskFilter').value;
+		let filtered = assessments;
+		if (filterValue !== '全部') {
+		  filtered = assessments.filter(a => a.riskLevel === filterValue);
+		}
+		renderAssessments(filtered);
+		updateStats(assessments);
+	  } catch (err) {
+		console.error('加载失败', err);
+		showAlert('加载评估记录失败', 'error');
+	  }
+	}
     
 		// 渲染评估记录
 function renderAssessments(assessments) {
@@ -1715,16 +1723,21 @@ document.getElementById('patientAge').addEventListener('input', checkExerciseRis
 document.getElementById('workType').addEventListener('change', checkExerciseRisk);
 document.getElementById('exerciseFrequency').addEventListener('change', checkExerciseRisk);
 	
-
-// 处理评估提交（基于18项特征随机森林模型）
-function handleAssessmentSubmit(e) {
+// 处理评估提交（基于18项特征 + 随机森林重要性权重）
+async function handleAssessmentSubmit(e) {
   e.preventDefault();
-  
-  // ========== 收集所有表单数据（18项特征）==========
+
+  const user = auth.currentUser;
+  if (!user) {
+    showAlert('请先登录', 'error');
+    return;
+  }
+
+  // ========== 1. 收集所有表单数据（包含新增字段） ==========
   const patientName = document.getElementById('patientName').value.trim();
   const age = parseInt(document.getElementById('patientAge').value);
   const gender = document.getElementById('patientGender').value;
-  const everMarried = document.getElementById('everMarried').value;   // 保留但不参与评分
+  const everMarried = document.getElementById('everMarried').value;  // 保留但不参与评分
   const workType = document.getElementById('workType').value;
   const residenceType = document.getElementById('residenceType').value;
   const hypertension = document.getElementById('hypertension').value === '1';
@@ -1760,11 +1773,11 @@ function handleAssessmentSubmit(e) {
   document.querySelectorAll('input[name="dietaryHabit"]:checked').forEach(checkbox => {
     selectedDietaryHabits.push(checkbox.value);
   });
-  const hasUnhealthyDiet = selectedDietaryHabits.some(habit => 
+  const hasUnhealthyDiet = selectedDietaryHabits.some(habit =>
     ['高盐', '高油', '高糖', '蔬菜不足', '水果不足'].includes(habit)
   );
 
-  // BMI 计算
+  // 计算 BMI
   let bmi = null;
   if (height && weight && height > 0 && weight > 0) {
     const heightInMeters = height / 100;
@@ -1772,14 +1785,14 @@ function handleAssessmentSubmit(e) {
     bmi = Math.round(bmi * 10) / 10;
   }
 
-  // 为兼容旧记录，生成一个 legacy heartDisease 字段
+  // 为了兼容旧数据，生成一个 legacy heartDisease 字段（仅用于存储，不参与评分）
   const heartDiseaseLegacy = heartDiseaseType !== '0';
 
-  // ========== 风险权重计算（基于随机森林18项特征重要性）==========
+  // ========== 2. 风险权重计算（基于随机森林特征重要性） ==========
   let riskScore = 0;
   let riskFactors = [];
 
-  // 1. 中风/短暂性脑缺血病史（最重要 38分）
+  // 1. 中风/短暂性脑缺血病史 - 38分
   const hasStrokeOrTIA = strokeHistory || tiaHistory;
   if (hasStrokeOrTIA) {
     riskScore += 38;
@@ -1787,41 +1800,41 @@ function handleAssessmentSubmit(e) {
     if (tiaHistory) riskFactors.push('短暂性脑缺血病史');
   }
 
-  // 2. 糖尿病史（血糖≥7.0，28分）
+  // 2. 糖尿病史（血糖≥7.0或病史）- 28分
   const hasDiabetes = avgGlucoseLevel >= 7.0;
   if (hasDiabetes) {
     riskScore += 28;
     riskFactors.push('糖尿病史');
   }
 
-  // 3. 职业（政府工作/从未工作，16分）
+  // 3. 职业（政府工作/从未工作）- 16分
   if (workType === '政府工作' || workType === '从未工作') {
     riskScore += 16;
     riskFactors.push(`职业风险（${workType}）`);
   }
 
-  // 4. 高血压病史（22分）
+  // 4. 高血压病史 - 22分
   if (hypertension) {
     riskScore += 22;
     riskFactors.push('高血压病史');
   }
 
-  // 5. 年龄分层（最高15分）
+  // 5. 年龄分层 - 最高15分
   if (age >= 75) riskScore += 15;
   else if (age >= 65) riskScore += 12;
   else if (age >= 55) riskScore += 9;
   else if (age >= 45) riskScore += 6;
   else if (age >= 35) riskScore += 3;
 
-  // 6. 家庭人均月收入（低风险 12分）
+  // 6. 家庭人均月收入 - 低风险12分
   if (monthlyIncome === '<2000') riskScore += 12;
   else if (monthlyIncome === '2000-5000') riskScore += 7;
 
-  // 7. 学历（小学及以下 10分）
+  // 7. 学历 - 小学及以下10分，初中6分
   if (education === '小学及以下') riskScore += 10;
   else if (education === '初中') riskScore += 6;
 
-  // 8. 房颤/心梗/其他心脏病（房颤14分，其他6分）
+  // 8. 房颤/心梗/其他心脏病 - 房颤14分，其他6分
   if (heartDiseaseType === '1') {
     riskScore += 14;
     riskFactors.push('房颤或心梗史');
@@ -1830,21 +1843,21 @@ function handleAssessmentSubmit(e) {
     riskFactors.push('其他心脏病');
   }
 
-  // 9. 运动缺乏（10分）
-  const lackOfExercise = exerciseFrequency === '无运动' || 
-                         (age > 50 && exerciseFrequency === '少量运动');
+  // 9. 运动缺乏 - 10分
+  const lackOfExercise = exerciseFrequency === '无运动' ||
+    (age > 50 && exerciseFrequency === '少量运动');
   if (lackOfExercise) {
     riskScore += 10;
     riskFactors.push('运动缺乏');
   }
 
-  // 10. 高血脂（9分）
+  // 10. 高血脂 - 9分
   if (hyperlipidemia) {
     riskScore += 9;
     riskFactors.push('高血脂');
   }
 
-  // 11. 吸烟（目前吸烟8分，以前吸烟4分）
+  // 11. 吸烟 - 目前吸烟8分，以前吸烟4分
   if (smokingStatus === '目前吸烟') {
     riskScore += 8;
     riskFactors.push('目前吸烟');
@@ -1853,14 +1866,14 @@ function handleAssessmentSubmit(e) {
     riskFactors.push('以前吸烟');
   }
 
-  // 12. 脑卒中家族史（7分）
+  // 12. 脑卒中家族史 - 7分
   if (strokeFamilyHistory !== '0') {
     riskScore += 7;
     const familyLevel = strokeFamilyHistory === '1' ? '一级亲属' : '二级亲属';
     riskFactors.push(`脑卒中家族史（${familyLevel}）`);
   }
 
-  // 13. 超重/肥胖 BMI（肥胖7分，超重5分）
+  // 13. 超重/肥胖 BMI - 肥胖7分，超重5分
   if (bmi) {
     if (bmi >= 28) {
       riskScore += 7;
@@ -1871,28 +1884,28 @@ function handleAssessmentSubmit(e) {
     }
   }
 
-  // 14. 居住地农村（4分）
+  // 14. 居住地农村 - 4分
   if (residenceType === '农村') riskScore += 4;
 
-  // 15. 高尿酸血症（4分）
+  // 15. 高尿酸血症 - 4分
   if (hyperuricemia) {
     riskScore += 4;
     riskFactors.push('高尿酸血症');
   }
 
-  // 16. 贫血（3分）
+  // 16. 贫血 - 3分
   if (anemia) {
     riskScore += 3;
     riskFactors.push('贫血');
   }
 
-  // 17. 心理疾病（3分）
+  // 17. 心理疾病 - 3分
   if (mentalIllness) {
     riskScore += 3;
     riskFactors.push('心理疾病');
   }
 
-  // 18. 血压/血糖附加修正（额外加分，不占主要权重）
+  // 18. 血压/血糖附加修正（额外加分） - 血压极高、严重高血糖等
   if (systolicBP >= 180 || diastolicBP >= 110) riskScore += 5;
   else if (systolicBP >= 160 || diastolicBP >= 100) riskScore += 3;
   if (avgGlucoseLevel >= 6.1 && avgGlucoseLevel < 7.0) riskScore += 3;  // 糖尿病前期
@@ -1901,7 +1914,7 @@ function handleAssessmentSubmit(e) {
   // 截断总分最高100
   let normalizedScore = Math.min(riskScore, 100);
 
-  // ========== 风险等级判定（阈值微调，匹配模型性能）==========
+  // ========== 3. 风险等级判定（阈值微调，匹配模型性能） ==========
   let riskLevel, probability;
   if (normalizedScore >= 60) {
     riskLevel = '高风险';
@@ -1916,9 +1929,8 @@ function handleAssessmentSubmit(e) {
   probability = Math.min(probability, 0.9834);
   const probabilityPercent = (probability * 100).toFixed(1);
 
-  // ========== 创建评估对象 ==========
+  // ========== 4. 创建评估对象（保存所有字段） ==========
   const assessment = {
-    id: Date.now().toString(),
     patientName,
     age,
     gender,
@@ -1927,7 +1939,7 @@ function handleAssessmentSubmit(e) {
     residenceType,
     hypertension,
     heartDisease: heartDiseaseLegacy,        // 兼容旧数据
-    heartDiseaseType: heartDiseaseType,      // 新增字段保存
+    heartDiseaseType,                         // 新字段
     strokeHistory,
     tiaHistory,
     strokeFamilyHistory,
@@ -1964,36 +1976,28 @@ function handleAssessmentSubmit(e) {
     }
   };
 
-  // 保存评估记录
-  const allAssessments = getAllAssessments();
-  allAssessments.unshift(assessment);
-  saveAssessments(allAssessments);
+  // 保存到 CloudBase
+  try {
+    await db.collection('users').doc(user.uid).collection('assessments').add(assessment);
+    document.getElementById('assessmentModal').style.display = 'none';
+    document.getElementById('assessmentForm').reset();
+    showAlert(`风险评估完成！风险等级：${riskLevel}，患病概率：${probabilityPercent}%`, 'success');
 
-  // 关闭模态框
-  document.getElementById('assessmentModal').style.display = 'none';
-  document.getElementById('assessmentForm').reset();
-  document.getElementById('bmiDisplayContainer').style.display = 'none';
-
-  // 显示详细结果
-  showAlert(`风险评估完成！风险等级：${riskLevel}，患病概率：${probabilityPercent}%`, 'success');
-
-  // 如果高风险，显示额外警告
-  if (riskLevel === '高风险') {
-    setTimeout(() => {
-      const highRiskFactors = riskFactors.filter(f => 
-        ['中风病史', '短暂性脑缺血病史', '高血压病史', '心脏病史', '糖尿病史', '重度高血压', '高血脂病史', '脑卒中家族史'].includes(f)
-      );
-      const factorText = highRiskFactors.length > 0 ? 
-        `主要风险因素：${highRiskFactors.slice(0, 5).join('、')}${highRiskFactors.length > 5 ? '等' : ''}` : '';
-      showAlert(
-        `⚠️ ${patientName} 被评估为高风险（概率${probabilityPercent}%），${factorText}建议尽快就医检查！`, 
-        'error'
-      );
-    }, 1000);
+    if (riskLevel === '高风险') {
+      setTimeout(() => {
+        const highRiskFactors = riskFactors.filter(f =>
+          ['中风病史', '短暂性脑缺血病史', '高血压病史', '心脏病史', '糖尿病史', '重度高血压', '高血脂病史', '脑卒中家族史'].includes(f)
+        );
+        const factorText = highRiskFactors.length > 0 ?
+          `主要风险因素：${highRiskFactors.slice(0, 5).join('、')}${highRiskFactors.length > 5 ? '等' : ''}` : '';
+        showAlert(`⚠️ ${patientName} 被评估为高风险（概率${probabilityPercent}%），${factorText}建议尽快就医检查！`, 'error');
+      }, 1000);
+    }
+    await loadAssessments();
+  } catch (error) {
+    console.error('保存到 CloudBase 失败', error);
+    showAlert('保存失败，请检查网络后重试', 'error');
   }
-
-  // 重新加载评估记录
-  loadAssessments();
 }
 
 
@@ -2088,276 +2092,203 @@ function stopSpeaking() {
 }
 
 // 更新查看评估详情的函数
-function viewAssessmentDetails(assessmentId) {
-  const assessments = getAllAssessments();
-  const assessment = assessments.find(a => a.id === assessmentId);
-  
-  if (!assessment) {
-    showAlert('未找到该评估记录', 'error');
-    return;
-  }
-  
-  const assessmentDate = new Date(assessment.date).toLocaleString('zh-CN');
-  const riskColor = getRiskColor(assessment.riskLevel);
-  
-  // 创建详情弹窗 - 需要更新为新的字段
-  const detailHtml = `
-    <div style="background: white; border-radius: 12px; padding: 30px; max-width: 700px; margin: 50px auto;">
-      <h2 style="color: #2c3e50; margin-top: 0; border-bottom: 2px solid #f0f0f0; padding-bottom: 15px;">脑卒中风险评估详情</h2>
-      
-      <!-- 风险等级和概率 -->
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; padding: 15px; background: ${riskColor + '10'}; border-radius: 8px;">
-        <div style="flex: 1;">
-          <div style="font-size: 14px; color: #666; margin-bottom: 5px;">评估结果</div>
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div style="font-size: 20px; font-weight: 600; color: ${riskColor};">${assessment.riskLevel}</div>
-            <div style="padding: 4px 12px; background: ${riskColor}; color: white; border-radius: 20px; font-size: 14px;">
-              风险分数: ${assessment.riskScore}
-            </div>
-          </div>
-        </div>
-        <div style="text-align: right;">
-          <div style="font-size: 14px; color: #666; margin-bottom: 5px;">患病概率</div>
-          <div style="font-size: 24px; font-weight: 700; color: ${riskColor};">${assessment.probability}%</div>
-        </div>
-		<button id="readAloudBtn" style="margin-left: 20px; background: none; border: none; font-size: 28px; cursor: pointer; color: ${riskColor};" title="朗读报告内容">🔊</button>
-      </div>
-      
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px;">
-        <!-- 左列：基本信息 -->
-        <div>
-          <h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">基本信息</h4>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">姓名</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.patientName}</div>
-            </div>
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">年龄/性别</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.age}岁 / ${assessment.gender}</div>
-            </div>
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">是否曾结婚</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.everMarried}</div>
-            </div>
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">职业类型</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.workType}</div>
-            </div>
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">居住地类型</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.residenceType}</div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 右列：临床指标 -->
-        <div>
-          <h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">临床指标</h4>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">血压</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.systolicBP}/${assessment.diastolicBP} mmHg</div>
-            </div>
-				<div>
-				  <div style="font-size: 12px; color: #666; margin-bottom: 3px;">平均血糖</div>
-				  <div style="font-size: 14px; color: #2c3e50;">${assessment.avgGlucoseLevel}</div>
+	async function viewAssessmentDetails(assessmentId) {
+	  const user = auth.currentUser;
+	  if (!user) {
+		showAlert('请先登录', 'error');
+		return;
+	  }
+
+	  try {
+		// 从 CloudBase 查询指定评估记录
+		const docRef = db.collection('users').doc(user.uid)
+		  .collection('assessments').doc(assessmentId);
+		const doc = await docRef.get();
+		if (!doc.exists) {
+		  showAlert('未找到该评估记录', 'error');
+		  return;
+		}
+		const assessment = { id: doc.id, ...doc.data() };
+	  
+		const assessmentDate = new Date(assessment.date).toLocaleString('zh-CN');
+		const riskColor = getRiskColor(assessment.riskLevel);
+	  
+		const detailHtml = `
+		  <div style="background: white; border-radius: 12px; padding: 30px; max-width: 700px; margin: 50px auto;">
+			<h2 style="color: #2c3e50; margin-top: 0; border-bottom: 2px solid #f0f0f0; padding-bottom: 15px;">脑卒中风险评估详情</h2>
+			
+			<!-- 风险等级和概率 -->
+			<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; padding: 15px; background: ${riskColor + '10'}; border-radius: 8px;">
+			  <div style="flex: 1;">
+				<div style="font-size: 14px; color: #666; margin-bottom: 5px;">评估结果</div>
+				<div style="display: flex; align-items: center; gap: 10px;">
+				  <div style="font-size: 20px; font-weight: 600; color: ${riskColor};">${assessment.riskLevel}</div>
+				  <div style="padding: 4px 12px; background: ${riskColor}; color: white; border-radius: 20px; font-size: 14px;">
+					风险分数: ${assessment.riskScore}
+				  </div>
 				</div>
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">BMI</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.bmi || '未测量'}</div>
-            </div>
-            <div>
-              <div style="font-size: 12px; color: #666; margin-bottom: 3px;">吸烟状况</div>
-              <div style="font-size: 14px; color: #2c3e50;">${assessment.smokingStatus}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 病史信息 -->
-	<div style="margin-bottom: 25px;">
-	  <h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">病史信息</h4>
-	  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px;">
-		<div>
-		  <div style="font-size: 12px; color: #666; margin-bottom: 3px;">高血压</div>
-		  <div style="font-size: 14px; color: #2c3e50;">${assessment.hypertension ? '是' : '否'}</div>
-		</div>
-		<div>
-		  <div style="font-size: 12px; color: #666; margin-bottom: 3px;">心脏病</div>
-		  <div style="font-size: 14px; color: #2c3e50;">${assessment.heartDisease ? '是' : '否'}</div>
-		</div>
-		<div>
-		  <div style="font-size: 12px; color: #666; margin-bottom: 3px;">中风病史</div>
-		  <div style="font-size: 14px; color: #2c3e50;">${assessment.strokeHistory ? '是' : '否'}</div>
-		</div>
-		<div>
-		  <div style="font-size: 12px; color: #666; margin-bottom: 3px;">短暂性脑缺血</div>
-		  <div style="font-size: 14px; color: #2c3e50;">${assessment.tiaHistory ? '是' : '否'}</div>
-		</div>
-		<div>
-		  <div style="font-size: 12px; color: #666; margin-bottom: 3px;">高血脂</div>
-		  <div style="font-size: 14px; color: #2c3e50;">${assessment.hyperlipidemia ? '是' : '否'}</div>
-		</div>
-		<div>
-		  <div style="font-size: 12px; color: #666; margin-bottom: 3px;">脑卒中家族史</div>
-		  <div style="font-size: 14px; color: #2c3e50;">
-			${assessment.strokeFamilyHistory !== '0' ? '有' : '无'}
+			  </div>
+			  <div style="text-align: right;">
+				<div style="font-size: 14px; color: #666; margin-bottom: 5px;">患病概率</div>
+				<div style="font-size: 24px; font-weight: 700; color: ${riskColor};">${assessment.probability}%</div>
+			  </div>
+			  <button id="readAloudBtn" style="margin-left: 20px; background: none; border: none; font-size: 28px; cursor: pointer; color: ${riskColor};" title="朗读报告内容">🔊</button>
+			</div>
+			
+			<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px;">
+			  <!-- 左列：基本信息 -->
+			  <div>
+				<h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">基本信息</h4>
+				<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">姓名</div><div style="font-size: 14px; color: #2c3e50;">${assessment.patientName}</div></div>
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">年龄/性别</div><div style="font-size: 14px; color: #2c3e50;">${assessment.age}岁 / ${assessment.gender}</div></div>
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">是否曾结婚</div><div style="font-size: 14px; color: #2c3e50;">${assessment.everMarried}</div></div>
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">职业类型</div><div style="font-size: 14px; color: #2c3e50;">${assessment.workType}</div></div>
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">居住地类型</div><div style="font-size: 14px; color: #2c3e50;">${assessment.residenceType}</div></div>
+				</div>
+			  </div>
+			  <!-- 右列：临床指标 -->
+			  <div>
+				<h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">临床指标</h4>
+				<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">血压</div><div style="font-size: 14px; color: #2c3e50;">${assessment.systolicBP}/${assessment.diastolicBP} mmHg</div></div>
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">平均血糖</div><div style="font-size: 14px; color: #2c3e50;">${assessment.avgGlucoseLevel}</div></div>
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">BMI</div><div style="font-size: 14px; color: #2c3e50;">${assessment.bmi || '未测量'}</div></div>
+				  <div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">吸烟状况</div><div style="font-size: 14px; color: #2c3e50;">${assessment.smokingStatus}</div></div>
+				</div>
+			  </div>
+			</div>
+			
+			<!-- 病史信息 -->
+			<div style="margin-bottom: 25px;">
+			  <h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">病史信息</h4>
+			  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px;">
+				<div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">高血压</div><div style="font-size: 14px; color: #2c3e50;">${assessment.hypertension ? '是' : '否'}</div></div>
+				<div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">心脏病</div><div style="font-size: 14px; color: #2c3e50;">${assessment.heartDisease ? '是' : '否'}</div></div>
+				<div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">中风病史</div><div style="font-size: 14px; color: #2c3e50;">${assessment.strokeHistory ? '是' : '否'}</div></div>
+				<div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">短暂性脑缺血</div><div style="font-size: 14px; color: #2c3e50;">${assessment.tiaHistory ? '是' : '否'}</div></div>
+				<div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">高血脂</div><div style="font-size: 14px; color: #2c3e50;">${assessment.hyperlipidemia ? '是' : '否'}</div></div>
+				<div><div style="font-size: 12px; color: #666; margin-bottom: 3px;">脑卒中家族史</div><div style="font-size: 14px; color: #2c3e50;">${assessment.strokeFamilyHistory !== '0' ? '有' : '无'}</div></div>
+			  </div>
+			</div>
+			
+			<!-- 风险因素 -->
+			<div style="margin-bottom: 25px;">
+			  <h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">风险因素</h4>
+			  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+				${assessment.riskFactors.map(factor => {
+				  let color = '#3498db';
+				  if (factor === '高血压') color = '#e74c3c';
+				  if (factor === '心脏病') color = '#e67e22';
+				  if (factor === '高血糖') color = '#d35400';
+				  if (factor === '目前吸烟') color = '#c0392b';
+				  if (factor === '以前吸烟') color = '#f39c12';
+				  return `<span style="padding: 6px 12px; background: ${color + '15'}; color: ${color}; border: 1px solid ${color + '40'}; border-radius: 12px; font-size: 13px;">${factor}</span>`;
+				}).join('')}
+				${assessment.riskFactors.length === 0 ? '<span style="color: #999; font-size: 14px;">未发现明显风险因素</span>' : ''}
+			  </div>
+			</div>
+			
+			<!-- 预防建议 -->
+			${assessment.riskLevel === '高风险' || assessment.riskLevel === '中风险' ? `
+			  <div style="margin-bottom: 28px; padding: 20px; background: #fff8e1; border-left: 5px solid #ffa000; border-radius: 8px;">
+				<h5 style="color: #d84315; margin-bottom: 15px; font-size: 19px; font-weight: 600;">💡 预防建议</h5>
+				<ul style="margin: 0; padding-left: 25px; font-size: 16px; color: #5d4037; line-height: 1.7;">
+				  ${assessment.hypertension ? '<li style="margin-bottom: 10px;">患有高血压，请遵医嘱服药，每日监测血压</li>' : ''}
+				  ${assessment.heartDisease ? '<li style="margin-bottom: 10px;">有心脏病史，建议心血管专科随访</li>' : ''}
+				  ${assessment.smokingStatus === '目前吸烟' ? '<li style="margin-bottom: 10px;">建议戒烟，吸烟是脑卒中的重要危险因素</li>' : ''}
+				  ${assessment.smokingStatus === '以前吸烟' ? '<li style="margin-bottom: 10px;">既往吸烟史，继续保持不吸烟</li>' : ''}
+				  ${parseFloat(assessment.avgGlucoseLevel) > 7.0 ? '<li style="margin-bottom: 10px;">血糖偏高，建议控制饮食，定期检查血糖</li>' : ''}
+				  ${assessment.bmi && assessment.bmi >= 25 ? '<li style="margin-bottom: 10px;">体重超标，建议控制体重，健康饮食</li>' : ''}
+				  <li style="margin-bottom: 10px;">保持健康饮食，低盐低脂，多吃蔬菜水果</li>
+				  ${getExerciseAdvice(assessment.age)}
+				  <li style="margin-bottom: 10px;">定期体检，监测血压、血糖、血脂等指标</li>
+				  ${assessment.riskLevel === '高风险' ? '<li style="margin-bottom: 12px; font-size: 17px; font-weight: 700; color: #c62828;">高风险人群，建议尽快到神经内科就诊，进行专业评估</li>' : ''}
+				</ul>
+			  </div>
+			` : ''}
+			
+			<!-- 备注 -->
+			${assessment.notes ? `
+			  <div style="margin-bottom: 25px;">
+				<h5 style="color: #2c3e50; margin-bottom: 8px; font-size: 15px;">备注</h5>
+				<div style="padding: 12px; background: #f9f9f9; border-radius: 6px; font-size: 14px; color: #555;">${assessment.notes}</div>
+			  </div>
+			` : ''}
+			
+			<div style="font-size: 12px; color: #999; margin-bottom: 20px;">
+			  评估时间：${assessmentDate} | 评估人员：${assessment.assessedBy}
+			</div>
+			
+			<div style="text-align: right; border-top: 1px solid #eee; padding-top: 20px;">
+			  <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding: 8px 20px; background: #3498db; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; margin-right: 10px;">关闭</button>
+			  ${assessment.riskLevel === '高风险' ? `<button onclick="printAssessment('${assessmentId}')" style="padding: 8px 20px; background: #f39c12; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">打印建议</button>` : ''}
+			</div>
 		  </div>
-		</div>
-	  </div>
-	</div>
-      
-      <!-- 风险因素 -->
-      <div style="margin-bottom: 25px;">
-        <h4 style="color: #2c3e50; margin-bottom: 15px; font-size: 16px;">风险因素</h4>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-          ${assessment.riskFactors.map(factor => {
-            // 根据特征重要性给不同因素不同颜色
-            let color = '#3498db';
-            if (factor === '高血压') color = '#e74c3c';
-            if (factor === '心脏病') color = '#e67e22';
-            if (factor === '高血糖') color = '#d35400';
-            if (factor === '目前吸烟') color = '#c0392b';
-            if (factor === '以前吸烟') color = '#f39c12';
-            
-            return `<span style="padding: 6px 12px; background: ${color + '15'}; color: ${color}; border: 1px solid ${color + '40'}; border-radius: 12px; font-size: 13px;">${factor}</span>`;
-          }).join('')}
-          ${assessment.riskFactors.length === 0 ? '<span style="color: #999; font-size: 14px;">未发现明显风险因素</span>' : ''}
-        </div>
-      </div>
-		  
-	<!-- 预防建议 - 放大版 -->
-	${assessment.riskLevel === '高风险' || assessment.riskLevel === '中风险' ? `
-		<div style="margin-bottom: 28px; padding: 20px; background: #fff8e1; border-left: 5px solid #ffa000; border-radius: 8px;">
-		  <h5 style="color: #d84315; margin-bottom: 15px; font-size: 19px; font-weight: 600;">💡 预防建议</h5>
-		  <ul style="margin: 0; padding-left: 25px; font-size: 16px; color: #5d4037; line-height: 1.7;">
-			${assessment.hypertension ? '<li style="margin-bottom: 10px;">患有高血压，请遵医嘱服药，每日监测血压</li>' : ''}
-			${assessment.heartDisease ? '<li style="margin-bottom: 10px;">有心脏病史，建议心血管专科随访</li>' : ''}
-			${assessment.smokingStatus === '目前吸烟' ? '<li style="margin-bottom: 10px;">建议戒烟，吸烟是脑卒中的重要危险因素</li>' : ''}
-			${assessment.smokingStatus === '以前吸烟' ? '<li style="margin-bottom: 10px;">既往吸烟史，继续保持不吸烟</li>' : ''}
-			${parseFloat(assessment.avgGlucoseLevel) > 7.0 ? '<li style="margin-bottom: 10px;">血糖偏高，建议控制饮食，定期检查血糖</li>' : ''}
-			${assessment.bmi && assessment.bmi >= 25 ? '<li style="margin-bottom: 10px;">体重超标，建议控制体重，健康饮食</li>' : ''}
-			<li style="margin-bottom: 10px;">保持健康饮食，低盐低脂，多吃蔬菜水果</li>
-			${getExerciseAdvice(assessment.age)}
-			<li style="margin-bottom: 10px;">定期体检，监测血压、血糖、血脂等指标</li>
-			${assessment.riskLevel === '高风险' ? '<li style="margin-bottom: 12px; font-size: 17px; font-weight: 700; color: #c62828;">高风险人群，建议尽快到神经内科就诊，进行专业评估</li>' : ''}
-		  </ul>
-		</div>
-	` : ''}
-      
-      <!-- 备注和其他信息 -->
-      ${assessment.notes ? `
-        <div style="margin-bottom: 25px;">
-          <h5 style="color: #2c3e50; margin-bottom: 8px; font-size: 15px;">备注</h5>
-          <div style="padding: 12px; background: #f9f9f9; border-radius: 6px; font-size: 14px; color: #555;">
-            ${assessment.notes}
-          </div>
-        </div>
-      ` : ''}
-      
-      <div style="font-size: 12px; color: #999; margin-bottom: 20px;">
-        评估时间：${assessmentDate} | 评估人员：${assessment.assessedBy}
-      </div>
-      
-      <div style="text-align: right; border-top: 1px solid #eee; padding-top: 20px;">
-        <button onclick="this.parentElement.parentElement.parentElement.remove()" 
-                style="padding: 8px 20px; background: #3498db; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; margin-right: 10px;">
-          关闭
-        </button>
-        ${assessment.riskLevel === '高风险' ? `
-          <button onclick="printAssessment('${assessmentId}')" 
-                  style="padding: 8px 20px; background: #f39c12; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
-            打印建议
-          </button>
-        ` : ''}
-      </div>
-    </div>
-  `;
-  
-  // 创建模态框
-  const modal = document.createElement('div');
-  modal.style.position = 'fixed';
-  modal.style.top = '0';
-  modal.style.left = '0';
-  modal.style.width = '100%';
-  modal.style.height = '100%';
-  modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
-  modal.style.zIndex = '1000';
-  modal.style.display = 'flex';
-  modal.style.alignItems = 'flex-start';
-  modal.style.paddingTop = '50px';
-  modal.style.overflowY = 'auto';
-  modal.innerHTML = detailHtml;
-  
-  // 点击外部关闭
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      document.body.removeChild(modal);
-    }
-  });
-  
-  document.body.appendChild(modal);
-  
-	// 获取朗读按钮
-const readBtn = modal.querySelector('#readAloudBtn');
-if (readBtn) {
-    let isReading = false; // 局部朗读状态（防止全局冲突，但可与全局变量同步）
-    readBtn.addEventListener('click', () => {
-        if (isReading) {
-            // 如果正在朗读，则停止
-            stopSpeaking();
-            readBtn.textContent = '🔊'; // 恢复图标
-            isReading = false;
-            return;
-        }
-
-        // 组织要朗读的文本
-        let text = `您好，患者 ${assessment.patientName} 的脑卒中风险评估结果为 ${assessment.riskLevel}，患病概率 ${assessment.probability}%。`;
-
-        if (assessment.riskFactors && assessment.riskFactors.length > 0) {
-            const factors = assessment.riskFactors.slice(0, 3).join('、');
-            text += `主要风险因素包括：${factors}。`;
-            if (assessment.riskFactors.length > 3) {
-                text += `等 ${assessment.riskFactors.length} 项。`;
-            }
-        }
-
-        if (assessment.riskLevel === '高风险' || assessment.riskLevel === '中风险') {
-            text += `预防建议：`;
-            if (assessment.hypertension) text += `患有高血压，请遵医嘱服药，每日监测血压；`;
-            if (assessment.heartDisease) text += `有心脏病史，建议心血管专科随访；`;
-            if (assessment.smokingStatus === '目前吸烟') text += `建议戒烟；`;
-            if (assessment.bmi && assessment.bmi >= 25) text += `体重超标，建议控制体重；`;
-            text += `保持健康饮食，低盐低脂，多吃蔬菜水果；${getExerciseAdviceForSpeech(assessment.age)}定期体检，监测血压、血糖、血脂等指标。`;
-        } else {
-            text += `请继续保持健康生活方式，定期进行健康检查。`;
-        }
-
-        // 开始朗读
-        const started = speakText(
-            text,
-            () => {
-                // 朗读开始，改变按钮样式
-                readBtn.textContent = '⏹️';
-                isReading = true;
-            },
-            () => {
-                // 朗读结束，恢复按钮
-                readBtn.textContent = '🔊';
-                isReading = false;
-            }
-        );
-
-        if (!started) {
-            // 如果无法朗读（例如不支持），可显示提示
-            showAlert('无法启动语音朗读', 'error');
-        }
-    });
-}
-
-}
-
+		`;
+	  
+		// 创建模态框
+		const modal = document.createElement('div');
+		modal.style.position = 'fixed';
+		modal.style.top = '0';
+		modal.style.left = '0';
+		modal.style.width = '100%';
+		modal.style.height = '100%';
+		modal.style.backgroundColor = 'rgba(0,0,0,0.5)';
+		modal.style.zIndex = '1000';
+		modal.style.display = 'flex';
+		modal.style.alignItems = 'flex-start';
+		modal.style.paddingTop = '50px';
+		modal.style.overflowY = 'auto';
+		modal.innerHTML = detailHtml;
+	  
+		modal.addEventListener('click', (e) => {
+		  if (e.target === modal) document.body.removeChild(modal);
+		});
+		document.body.appendChild(modal);
+	  
+		// 朗读按钮
+		const readBtn = modal.querySelector('#readAloudBtn');
+		if (readBtn) {
+		  let isReading = false;
+		  readBtn.addEventListener('click', () => {
+			if (isReading) {
+			  stopSpeaking();
+			  readBtn.textContent = '🔊';
+			  isReading = false;
+			  return;
+			}
+			let text = `您好，患者 ${assessment.patientName} 的脑卒中风险评估结果为 ${assessment.riskLevel}，患病概率 ${assessment.probability}%。`;
+			if (assessment.riskFactors && assessment.riskFactors.length > 0) {
+			  const factors = assessment.riskFactors.slice(0, 3).join('、');
+			  text += `主要风险因素包括：${factors}。`;
+			  if (assessment.riskFactors.length > 3) text += `等 ${assessment.riskFactors.length} 项。`;
+			}
+			if (assessment.riskLevel === '高风险' || assessment.riskLevel === '中风险') {
+			  text += `预防建议：`;
+			  if (assessment.hypertension) text += `患有高血压，请遵医嘱服药，每日监测血压；`;
+			  if (assessment.heartDisease) text += `有心脏病史，建议心血管专科随访；`;
+			  if (assessment.smokingStatus === '目前吸烟') text += `建议戒烟；`;
+			  if (assessment.bmi && assessment.bmi >= 25) text += `体重超标，建议控制体重；`;
+			  text += `保持健康饮食，低盐低脂，多吃蔬菜水果；${getExerciseAdviceForSpeech(assessment.age)}定期体检，监测血压、血糖、血脂等指标。`;
+			} else {
+			  text += `请继续保持健康生活方式，定期进行健康检查。`;
+			}
+			const started = speakText(text, () => {
+			  readBtn.textContent = '⏹️';
+			  isReading = true;
+			}, () => {
+			  readBtn.textContent = '🔊';
+			  isReading = false;
+			});
+			if (!started) showAlert('无法启动语音朗读', 'error');
+		  });
+		}
+	  } catch (error) {
+		console.error('加载详情失败', error);
+		showAlert('加载详情失败，请重试', 'error');
+	  }
+	}
 // 根据年龄返回运动建议
 function getExerciseAdvice(age) {
     if (age >= 80) {
@@ -2380,12 +2311,17 @@ function getExerciseAdviceForSpeech(age) {
 }
 
 	// 打印评估建议函数
-function printAssessment(assessmentId) {
-  const assessments = getAllAssessments();
-  const assessment = assessments.find(a => a.id === assessmentId);
-  
-  if (!assessment) return;
-  
+async function printAssessment(assessmentId) {
+  const user = auth.currentUser;
+  if (!user) return;
+  try {
+    const doc = await db.collection('users').doc(user.uid)
+      .collection('assessments').doc(assessmentId).get();
+    if (!doc.exists) {
+      showAlert('未找到该评估记录', 'error');
+      return;
+    }
+  const assessment = { id: doc.id, ...doc.data() }; 
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`
     <html>
@@ -2464,27 +2400,24 @@ function printAssessment(assessmentId) {
   `);
   printWindow.document.close();
   printWindow.print();
+}catch (err) {
+    showAlert('打印失败', 'error');
+  }
 }
     
     
-    // 删除评估记录
-    function deleteAssessment(assessmentId) {
-      if (!confirm('确定要删除这条评估记录吗？此操作不可撤销。')) {
-        return;
-      }
-      
-      const assessments = getAllAssessments();
-      const filteredAssessments = assessments.filter(a => a.id !== assessmentId);
-      
-      if (filteredAssessments.length === assessments.length) {
-        showAlert('删除失败，未找到该评估记录', 'error');
-        return;
-      }
-      
-      saveAssessments(filteredAssessments);
-      showAlert('评估记录已删除', 'success');
-      loadAssessments();
-    }
+	async function deleteAssessment(assessmentId) {
+	  if (!confirm('确定要删除这条评估记录吗？此操作不可撤销。')) return;
+	  const user = auth.currentUser;
+	  if (!user) return;
+	  try {
+		await db.collection('users').doc(user.uid).collection('assessments').doc(assessmentId).delete();
+		showAlert('评估记录已删除', 'success');
+		loadAssessments();
+	  } catch (err) {
+		showAlert('删除失败', 'error');
+	  }
+	}
     
     // 初始化事件监听
     function initEventListeners() {
@@ -2502,13 +2435,22 @@ function printAssessment(assessmentId) {
     }
     
 	// 导出数据
-	function exportData() {
-	  const assessments = getAllAssessments();
-	  
-	  if (assessments.length === 0) {
-		showAlert('没有可导出的数据', 'error');
+	async function exportData() {
+	  const user = auth.currentUser;
+	  if (!user) {
+		showAlert('请先登录', 'error');
 		return;
 	  }
+	  try {
+		const res = await db.collection('users').doc(user.uid)
+		  .collection('assessments')
+		  .orderBy('date', 'desc')
+		  .get();
+		const assessments = res.data.map(doc => doc);
+		if (assessments.length === 0) {
+		  showAlert('没有可导出的数据', 'error');
+		  return;
+		}
 	  
 	  // 在exportData函数中（大约第910行），修改CSV头部：
 const headers = ['患者姓名', '年龄', '性别', '是否曾结婚', '职业类型', '居住地类型', 
@@ -2556,25 +2498,32 @@ const csvData = assessments.map(assessment => [
 	  
 	  URL.revokeObjectURL(url);
 	  showAlert('数据导出成功', 'success');
-	}
-    
+	}catch (err) {
+    showAlert('导出失败', 'error');
+  }
+}
     // 清空所有数据
-    function clearAllData() {
-	  if (!confirm('确定要清空所有评估记录吗？此操作不可撤销。')) {
-		return;
-	  }
-	  
-	  if (confirm('再次确认：这将删除您的所有评估记录，确定要继续吗？')) {
-		const userData = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
-		const username = userData.username;
-		if (username) {
-		  const userKey = `${ASSESSMENTS_DB_KEY}_${username}`;
-		  localStorage.removeItem(userKey);
-		}
+	async function clearAllData() {
+	  if (!confirm('确定要清空所有评估记录吗？此操作不可撤销。')) return;
+	  if (!confirm('再次确认：这将永久删除您的所有评估记录，确定要继续吗？')) return;
+	  const user = auth.currentUser;
+	  if (!user) return;
+	  try {
+		// 获取该用户的所有评估记录 ID
+		const res = await db.collection('users').doc(user.uid)
+		  .collection('assessments')
+		  .get();
+		const batch = db.batch();
+		res.data.forEach(doc => {
+		  batch.delete(doc.ref);
+		});
+		await batch.commit();
 		showAlert('所有评估记录已清空', 'success');
-		loadAssessments();
+		loadAssessments();  // 刷新列表
+	  } catch (err) {
+		showAlert('清空失败', 'error');
 	  }
-    }
+	}
     
 	    // 获取所有聊天消息
     function getAllChatMessages() {
@@ -2750,40 +2699,82 @@ const csvData = assessments.map(assessment => [
       }
     });
 	
+	// 在 window.onload 开头添加
+	auth.onAuthStateChanged(async (user) => {
+	  if (user) {
+		// 用户已登录，获取用户名并显示主页面
+		const doc = await db.collection('users').doc(user.uid).get();
+		const userData = doc.data();
+		sessionStorage.setItem('currentUser', JSON.stringify({
+		  uid: user.uid,
+		  username: userData?.username || '用户'
+		}));
+		hideEntryPage();
+	  } else {
+		// 未登录，显示入口页面
+		document.body.style.overflow = 'hidden';
+	  }
+	});
+	
+	// 密码强度检测函数（实时显示）
+	function checkPasswordStrength() {
+	  const pwd = document.getElementById('regPassword');
+	  const strengthDiv = document.getElementById('passwordStrength');
+	  if (!pwd || !strengthDiv) return;
+	  
+	  const password = pwd.value;
+	  
+	  // 空密码时清空提示
+	  if (password.length === 0) {
+		strengthDiv.innerHTML = '';
+		return;
+	  }
+	  
+	  // 长度不足6位 → 红色警告
+	  if (password.length < 6) {
+		strengthDiv.innerHTML = '⚠️ 密码太短（至少需要6位）';
+		strengthDiv.style.color = '#f44336';
+		return;
+	  }
+	  
+	  // 计算强度得分
+	  let score = 0;
+	  if (/[a-z]/.test(password)) score++;        // 小写字母
+	  if (/[A-Z]/.test(password)) score++;        // 大写字母
+	  if (/[0-9]/.test(password)) score++;        // 数字
+	  if (/[^a-zA-Z0-9]/.test(password)) score++; // 特殊字符
+	  if (password.length >= 8) score++;          // 长度加分
+	  
+	  let text = '', color = '';
+	  if (score <= 2) {
+		text = '弱';
+		color = '#f44336';
+	  } else if (score <= 4) {
+		text = '中';
+		color = '#ff9800';
+	  } else {
+		text = '强';
+		color = '#4caf50';
+	  }
+	  strengthDiv.innerHTML = `🔐 密码强度：${text}`;
+	  strengthDiv.style.color = color;
+	}
+
+	// 监听密码框的输入事件
+	document.addEventListener('DOMContentLoaded', function() {
+	  const pwdInput = document.getElementById('regPassword');
+	  if (pwdInput) {
+		pwdInput.addEventListener('input', checkPasswordStrength);
+	  }
+	});
+	
     // 页面加载时初始化
     window.onload = function() {
-      // 初始化用户数据库
-      initUserDatabase();
       
       // 确保入口页面显示时不能滚动
       document.body.style.overflow = 'hidden';
-      
-      // 检查是否已有登录用户（自动登录）
-      const userData = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
-      if (userData.username && userData.loginTime) {
-        // 检查登录是否过期（24小时）
-        const loginTime = new Date(userData.loginTime);
-        const now = new Date();
-        const hoursDiff = (now - loginTime) / (1000 * 60 * 60);
-        
-        if (hoursDiff < 24) {
-          // 自动登录
-          hideEntryPage();
-        } else {
-          // 登录过期，清除session
-          sessionStorage.removeItem('currentUser');
-        }
-      }
-      
-      // 初始化聊天模态框的关闭事件
-      const chatModal = document.getElementById('chatRoomModal');
-      if (chatModal) {
-        const closeBtn = chatModal.querySelector('.close');
-        if (closeBtn) {
-          closeBtn.addEventListener('click', () => {
-            chatModal.style.display = 'none';
-          });
-        }
+      document.getElementById('username').focus();
+
 		if (window.speechSynthesis) {
     // 触发语音列表加载
 		window.speechSynthesis.getVoices();
@@ -2820,78 +2811,89 @@ document.querySelectorAll('.changelog-header').forEach(header => {
         }
     });
 });
-      }
       
-      // 自动聚焦到用户名输入框
-      document.getElementById('username').focus();
     };
 	
 	// ==================== AI 助手模块 ====================
-const AI_API_URL = 'https://1419360854-7vw05q6n91.ap-guangzhou.tencentscf.com/';
+const AI_API_URL = 'http://localhost:3000/api/chat'; // 如果后端地址不同请修改
 
 // 获取当前用户最新的评估数据（用于上下文）
-function getCurrentAssessmentContext() {
-    const assessments = getAllAssessments();
-    if (assessments.length === 0) return null;
-    const latest = assessments[0];
+async function getCurrentAssessmentContext() {
+  const user = auth.currentUser;
+  if (!user) return null;
+  try {
+    const res = await db.collection('users').doc(user.uid)
+      .collection('assessments')
+      .orderBy('date', 'desc')
+      .limit(1)
+      .get();
+    if (res.data.length === 0) return null;
+    const latest = res.data[0];
     return {
-        age: latest.age,
-        riskLevel: latest.riskLevel,
-        riskFactors: latest.riskFactors,
-        hypertension: latest.hypertension
+      age: latest.age,
+      riskLevel: latest.riskLevel,
+      riskFactors: latest.riskFactors,
+      hypertension: latest.hypertension
     };
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
 }
 
 // 流式获取 AI 回答并显示
 async function streamAIResponse(question, onChunk, onComplete) {
-    const assessment = getCurrentAssessmentContext();
-
-    let systemPrompt = `你是一位专业的脑卒中健康顾问，服务于粤北地区（韶关、清远、河源等）。
-请用亲切、通俗的语言回答，像关心长辈一样。
-回答要简洁明了，避免长段落。
-涉及医学建议时，提醒用户咨询专业医生。
-对于紧急情况（如突然中风症状），立即建议拨打120。`;
-
-    if (assessment && assessment.age) {
-        systemPrompt += `\n\n当前用户信息：
-- 年龄：${assessment.age}岁
-- 风险等级：${assessment.riskLevel || '未知'}
-- 主要风险因素：${(assessment.riskFactors || []).join('、') || '无'}
-- 是否有高血压：${assessment.hypertension ? '是' : '否'}`;
-    }
-
-    const requestBody = {
-        model: 'deepseek-r1',
-        messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: question }
-        ],
-        stream: false,      // 非流式
-        max_tokens: 1000,
-        temperature: 0.7
-    };
-
+    const assessmentContext = await getCurrentAssessmentContext();
     try {
         const response = await fetch(AI_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify({
+                message: question,
+                assessment: assessmentContext
+            })
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('后端返回错误:', errorText);
-            throw new Error(`HTTP ${response.status}: ${errorText}`);
-        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-        const data = await response.json();
-        const fullText = data.content || '抱歉，未能获取回答。';
-        onChunk(fullText);
-        onComplete(fullText);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const dataStr = line.slice(6);
+                    if (dataStr === '[DONE]') continue;
+                    try {
+                        const data = JSON.parse(dataStr);
+                        if (data.error) {
+                            onChunk?.(`[错误] ${data.error}`);
+                            return;
+                        }
+                        if (data.content) {
+                            fullText += data.content;
+                            onChunk?.(data.content);
+                        }
+                        if (data.done) {
+                            onComplete?.(fullText);
+                            return;
+                        }
+                    } catch (e) {
+                        // 忽略解析错误
+                    }
+                }
+            }
+        }
+        onComplete?.(fullText);
     } catch (error) {
         console.error('AI请求失败:', error);
         onChunk?.('网络错误，请稍后再试。');
-        onComplete?.('网络错误，请稍后再试。');
     }
 }
 
@@ -3113,17 +3115,6 @@ if (document.readyState === 'loading') {
         </div>
         <div style="padding: 20px;">
             <div class="changelog-list">
-				<div class="changelog-item">
-                    <div class="changelog-header" data-version="v4.1">
-                        <span class="version-badge">v4.1</span>
-                        <span class="version-date">2025-04-05</span>
-                        <span class="toggle-icon">▶</span>
-                    </div>
-                    <ul class="changelog-desc" style="display: none;">
-                        <li>🖥️ 实现以公网地址方式打开脑卒中平台，无需更新即可使用</li>
-						<li>🚀 优化 DeepSeek 大语言模型基本成功，支持手机端和电脑端</li>
-                    </ul>
-                </div>
                 <div class="changelog-item">
                     <div class="changelog-header" data-version="v4.0">
                         <span class="version-badge">v4.0</span>
