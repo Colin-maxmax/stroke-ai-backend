@@ -1298,7 +1298,7 @@
 	  }
 	  try {
 		// 验证邮箱验证码
-		await auth.verifyEmailCode(code, pendingRegistrationEmail);
+		await auth.verifyEmailCode(pendingRegistrationEmail, code);
 		// 验证成功后，使用邮箱密码登录
 		await auth.signInWithEmailAndPassword(pendingRegistrationEmail, pendingRegistrationPassword);
 		const user = auth.currentUser;
@@ -1649,9 +1649,12 @@ function initModal() {
   const newAssessmentBtn = document.getElementById('newAssessmentBtn');
   const assessmentForm = document.getElementById('assessmentForm');
   
-  const verifyBtn = document.getElementById('verifyCodeBtn');
+	const verifyBtn = document.getElementById('verifyCodeBtn');
 	if (verifyBtn) {
-		verifyBtn.addEventListener('click', verifyCodeAndComplete);
+	  console.log('verifyCodeBtn found');
+	  verifyBtn.addEventListener('click', verifyCodeAndComplete);
+	} else {
+	  console.error('verifyCodeBtn not found');
 	}
   
   // 打开模态框
