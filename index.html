@@ -1302,8 +1302,6 @@
 		const userCredential = await auth.signUpWithEmailAndPassword(fakeEmail, password);
 		const user = userCredential.user;
 
-		// 2. 立即绑定用户名（关键步骤）
-		await auth.currentUser.updateUsername({ username: username });
 
 		// 3. 保存用户信息到数据库
 		await db.collection('users').doc(user.uid).set({
@@ -2700,21 +2698,31 @@ const csvData = assessments.map(assessment => [
     });
 	
 	// 在 window.onload 开头添加
-	auth.onAuthStateChanged(async (user) => {
-	  if (user) {
-		// 用户已登录，获取用户名并显示主页面
-		const doc = await db.collection('users').doc(user.uid).get();
-		const userData = doc.data();
-		sessionStorage.setItem('currentUser', JSON.stringify({
-		  uid: user.uid,
-		  username: userData?.username || '用户'
-		}));
-		hideEntryPage();
-	  } else {
-		// 未登录，显示入口页面
-		document.body.style.overflow = 'hidden';
+// 轮询检查登录状态（替代 onAuthStateChanged）
+	let lastUser = null;
+	setInterval(async () => {
+	  const currentUser = auth.currentUser;
+	  if (currentUser !== lastUser) {
+		lastUser = currentUser;
+		if (currentUser) {
+		  // 用户已登录，获取用户名并显示主页面
+		  try {
+			const doc = await db.collection('users').doc(currentUser.uid).get();
+			const userData = doc.data();
+			sessionStorage.setItem('currentUser', JSON.stringify({
+			  uid: currentUser.uid,
+			  username: userData?.username || '用户'
+			}));
+			hideEntryPage();
+		  } catch (err) {
+			console.error('获取用户信息失败', err);
+		  }
+		} else {
+		  // 未登录，显示入口页面
+		  document.body.style.overflow = 'hidden';
+		}
 	  }
-	});
+	}, 1000); // 每秒检查一次
 	
 	// 密码强度检测函数（实时显示）
 	function checkPasswordStrength() {
