@@ -692,7 +692,7 @@
       <!-- 登录表单 -->
       <div id="loginForm">
         <div class="form-group">
-          <label class="form-label" for="username">账号</label>
+          <label class="form-label" for="username">邮箱</label>
           <input type="text" id="username" class="form-input" placeholder="请输入您的账号">
         </div>
         
@@ -718,7 +718,7 @@
         </div>
         
         <div class="form-group">
-          <label class="form-label" for="regPassword">设置密码</label>
+          <label class="form-label" for="regPassword">邮箱</label>
           <input type="password" id="regPassword" class="form-input" placeholder="请设置您的密码">
 		  <div id="passwordStrength" style="font-size: 12px; margin-top: 5px;"></div>
         </div>
@@ -1254,38 +1254,38 @@
     
     // 登录功能
 	async function login() {
-	  const username = document.getElementById('username').value.trim();
+	  const email = document.getElementById('username').value.trim();   // 注意变量名改为 email
 	  const password = document.getElementById('password').value.trim();
 
-	  if (!username || !password) {
-		showMessage('loginMessage', '请输入用户名和密码', 'error');
+	  if (!email || !password) {
+		showMessage('loginMessage', '请输入邮箱和密码', 'error');
 		return;
 	  }
 
 	  try {
-		const userCredential = await auth.signInWithUsernameAndPassword(username, password);
-		const user = userCredential.user;
+		await auth.signInWithEmailAndPassword(email, password);
+		const user = auth.currentUser;
 		const doc = await db.collection('users').doc(user.uid).get();
 		const userData = doc.data();
 		sessionStorage.setItem('currentUser', JSON.stringify({
 		  uid: user.uid,
-		  username: userData?.username || username
+		  username: userData?.username || email.split('@')[0]   // 用户显示名称可以用邮箱前缀
 		}));
 		showMessage('loginMessage', '登录成功', 'success');
 		setTimeout(() => hideEntryPage(), 1000);
 	  } catch (err) {
-		showMessage('loginMessage', '用户名或密码错误', 'error');
+		showMessage('loginMessage', '邮箱或密码错误', 'error');
 	  }
 	}
     
     // 注册功能
 	async function register() {
-	  const username = document.getElementById('regUsername').value.trim();
+	  const email = document.getElementById('regUsername').value.trim();   // 注意变量名改为 email
 	  const password = document.getElementById('regPassword').value.trim();
 	  const confirm = document.getElementById('confirmPassword').value.trim();
 
-	  if (!username || !password || password !== confirm) {
-		showMessage('registerMessage', '用户名/密码无效或两次密码不一致', 'error');
+	  if (!email || !password || password !== confirm) {
+		showMessage('registerMessage', '邮箱/密码无效或两次密码不一致', 'error');
 		return;
 	  }
 	  if (password.length < 6) {
@@ -1294,22 +1294,19 @@
 	  }
 
 	  try {
-		// 直接使用用户名和密码注册
-		const userCredential = await auth.signUpWithUsernameAndPassword(username, password);
+		const userCredential = await auth.signUpWithEmailAndPassword(email, password);
 		const user = userCredential.user;
-
-		// 保存用户信息到数据库（可选，用于展示）
+		// 保存用户信息（可选）
 		await db.collection('users').doc(user.uid).set({
-		  username: username,
+		  email: email,
 		  createdAt: new Date()
 		});
-
-		sessionStorage.setItem('currentUser', JSON.stringify({ uid: user.uid, username: username }));
+		sessionStorage.setItem('currentUser', JSON.stringify({ uid: user.uid, username: email.split('@')[0] }));
 		showMessage('registerMessage', '注册成功', 'success');
 		setTimeout(() => hideEntryPage(), 1000);
 	  } catch (err) {
 		let msg = err.message;
-		if (msg.includes('username-already-exists')) msg = '该用户名已被注册';
+		if (msg.includes('email-already-exists')) msg = '该邮箱已被注册';
 		else if (msg.includes('weak-password')) msg = '密码强度太弱（至少6位）';
 		showMessage('registerMessage', msg, 'error');
 	  }
