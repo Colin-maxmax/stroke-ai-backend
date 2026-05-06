@@ -1261,10 +1261,9 @@
 		showMessage('loginMessage', '请输入用户名和密码', 'error');
 		return;
 	  }
-		const email = username.includes('@') ? username : username + '@strokefake.com';
+
 	  try {
-		// 直接使用用户名密码登录
-		const userCredential = await auth.signInWithEmailAndPassword(email, password);
+		const userCredential = await auth.signInWithUsernameAndPassword(username, password);
 		const user = userCredential.user;
 		const doc = await db.collection('users').doc(user.uid).get();
 		const userData = doc.data();
@@ -1294,19 +1293,14 @@
 		return;
 	  }
 
-	  // 使用一个固定的内部邮箱（实际不会收到邮件）
-	  const fakeEmail = `${Date.now()}_${username}@strokefake.com`;
-
 	  try {
-		// 1. 用虚拟邮箱注册（必须走邮箱通道）
-		const userCredential = await auth.signUpWithEmailAndPassword(fakeEmail, password);
+		// 直接使用用户名和密码注册
+		const userCredential = await auth.signUpWithUsernameAndPassword(username, password);
 		const user = userCredential.user;
 
-
-		// 3. 保存用户信息到数据库
+		// 保存用户信息到数据库（可选，用于展示）
 		await db.collection('users').doc(user.uid).set({
 		  username: username,
-		  email: fakeEmail,
 		  createdAt: new Date()
 		});
 
@@ -1315,9 +1309,8 @@
 		setTimeout(() => hideEntryPage(), 1000);
 	  } catch (err) {
 		let msg = err.message;
-		if (msg.includes('email-already-exists')) msg = '该用户名已被注册';
+		if (msg.includes('username-already-exists')) msg = '该用户名已被注册';
 		else if (msg.includes('weak-password')) msg = '密码强度太弱（至少6位）';
-		else if (msg.includes('username-already-exists')) msg = '该用户名已被注册';
 		showMessage('registerMessage', msg, 'error');
 	  }
 	}
