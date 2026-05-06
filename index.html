@@ -1246,6 +1246,12 @@
       document.getElementById('regUsername').value = '';
       document.getElementById('regPassword').value = '';
       document.getElementById('confirmPassword').value = '';
+	  
+	    const verifyBtn = document.getElementById('verifyCodeBtn');
+	  if (verifyBtn) {
+		verifyBtn.removeEventListener('click', verifyCodeAndComplete);
+		verifyBtn.addEventListener('click', verifyCodeAndComplete);
+	  }
     }
     
     // 显示登录表单
@@ -1297,9 +1303,9 @@
 		return;
 	  }
 	  try {
-		// 验证邮箱验证码
-		await auth.verifyEmailCode(pendingRegistrationEmail, code);
-		// 验证成功后，使用邮箱密码登录
+		// 验证邮箱验证码（不需要传邮箱，SDK会内部记住）
+		await auth.verifyEmailCode(code);
+		// 验证成功后，直接登录
 		await auth.signInWithEmailAndPassword(pendingRegistrationEmail, pendingRegistrationPassword);
 		const user = auth.currentUser;
 		await db.collection('users').doc(user.uid).set({
@@ -1314,7 +1320,11 @@
 		setTimeout(() => hideEntryPage(), 1000);
 	  } catch (err) {
 		console.error(err);
-		showMessage('registerMessage', '验证码错误或已过期', 'error');
+		let msg = '验证码错误或已过期';
+		if (err.message && err.message.includes('invalid verification code')) {
+		  msg = '验证码错误，请重新获取';
+		}
+		showMessage('registerMessage', msg, 'error');
 	  }
 	}
 		
