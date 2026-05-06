@@ -691,10 +691,10 @@
       
       <!-- 登录表单 -->
       <div id="loginForm">
-        <div class="form-group">
-          <label class="form-label" for="username">邮箱</label>
-          <input type="text" id="username" class="form-input" placeholder="请输入您的账号">
-        </div>
+		<div class="form-group">
+		  <label class="form-label" for="username">邮箱地址</label>
+		  <input type="email" id="username" class="form-input" placeholder="请输入您的邮箱" required>
+		</div>
         
         <div class="form-group">
           <label class="form-label" for="password">密码</label>
@@ -712,16 +712,16 @@
       
       <!-- 注册表单 -->
       <div id="registerForm" style="display: none;">
-        <div class="form-group">
-          <label class="form-label" for="regUsername">设置账号</label>
-          <input type="text" id="regUsername" class="form-input" placeholder="请设置您的账号">
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="regPassword">邮箱</label>
-          <input type="password" id="regPassword" class="form-input" placeholder="请设置您的密码">
+		<div class="form-group">
+		  <label class="form-label" for="regUsername">邮箱地址</label>
+		  <input type="email" id="regUsername" class="form-input" placeholder="请输入您的邮箱" required>
+		</div>
+
+		<div class="form-group">
+		  <label class="form-label" for="regPassword">密码</label>  <!-- 修正 -->
+		  <input type="password" id="regPassword" class="form-input" placeholder="请设置您的密码" required>
 		  <div id="passwordStrength" style="font-size: 12px; margin-top: 5px;"></div>
-        </div>
+		</div>
         
         <div class="form-group">
           <label class="form-label" for="confirmPassword">确认密码</label>
@@ -743,10 +743,10 @@
         如有健康问题，请及时咨询专业医生。
       </div>
       
-      <div class="login-tips">
-        测试账号：admin / admin123<br>
-        或自行注册新账号
-      </div>
+		<div class="login-tips">
+		  使用真实邮箱注册，注册后请前往邮箱验证。<br>
+		  已有账号请直接登录。
+		</div>
     </div>
   </div>
   
