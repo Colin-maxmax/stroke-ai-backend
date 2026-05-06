@@ -728,6 +728,14 @@
           <input type="password" id="confirmPassword" class="form-input" placeholder="请再次输入密码">
         </div>
         
+		<div id="verificationCodeGroup" style="display: none;">
+		  <div class="form-group">
+			<label class="form-label">验证码</label>
+			<input type="text" id="verificationCode" class="form-input" placeholder="请输入邮箱收到的6位验证码">
+		  </div>
+		  <button type="button" id="verifyCodeBtn" class="enter-btn" style="background: #4caf50;">验证并完成注册</button>
+		</div>
+		
         <div id="registerMessage" class="message"></div>
         
         <button class="enter-btn" onclick="register()" id="registerBtn">注册</button>
@@ -1254,7 +1262,7 @@
     
     // 登录功能
 	async function login() {
-	  const email = document.getElementById('username').value.trim();   // 注意变量名改为 email
+	  const email = document.getElementById('username').value.trim();
 	  const password = document.getElementById('password').value.trim();
 
 	  if (!email || !password) {
@@ -1269,18 +1277,53 @@
 		const userData = doc.data();
 		sessionStorage.setItem('currentUser', JSON.stringify({
 		  uid: user.uid,
-		  username: userData?.username || email.split('@')[0]   // 用户显示名称可以用邮箱前缀
+		  username: userData?.username || email.split('@')[0]
 		}));
 		showMessage('loginMessage', '登录成功', 'success');
 		setTimeout(() => hideEntryPage(), 1000);
 	  } catch (err) {
-		showMessage('loginMessage', '邮箱或密码错误', 'error');
+		let msg = '邮箱或密码错误';
+		if (err.message && err.message.includes('not verified')) {
+		  msg = '邮箱尚未验证，请先查收验证邮件，输入验证码完成注册。';
+		}
+		showMessage('loginMessage', msg, 'error');
 	  }
 	}
     
+	async function verifyCodeAndComplete() {
+	  const code = document.getElementById('verificationCode').value.trim();
+	  if (!code) {
+		showMessage('registerMessage', '请输入验证码', 'error');
+		return;
+	  }
+	  try {
+		// 验证邮箱验证码
+		await auth.verifyEmailCode(code, pendingRegistrationEmail);
+		// 验证成功后，使用邮箱密码登录
+		await auth.signInWithEmailAndPassword(pendingRegistrationEmail, pendingRegistrationPassword);
+		const user = auth.currentUser;
+		await db.collection('users').doc(user.uid).set({
+		  email: pendingRegistrationEmail,
+		  createdAt: new Date()
+		});
+		sessionStorage.setItem('currentUser', JSON.stringify({
+		  uid: user.uid,
+		  username: pendingRegistrationEmail.split('@')[0]
+		}));
+		showMessage('registerMessage', '注册成功', 'success');
+		setTimeout(() => hideEntryPage(), 1000);
+	  } catch (err) {
+		console.error(err);
+		showMessage('registerMessage', '验证码错误或已过期', 'error');
+	  }
+	}
+		
     // 注册功能
+	let pendingRegistrationEmail = null;
+	let pendingRegistrationPassword = null;
+
 	async function register() {
-	  const email = document.getElementById('regUsername').value.trim();   // 注意变量名改为 email
+	  const email = document.getElementById('regUsername').value.trim();
 	  const password = document.getElementById('regPassword').value.trim();
 	  const confirm = document.getElementById('confirmPassword').value.trim();
 
@@ -1294,16 +1337,16 @@
 	  }
 
 	  try {
-		const userCredential = await auth.signUpWithEmailAndPassword(email, password);
-		const user = userCredential.user;
-		// 保存用户信息（可选）
-		await db.collection('users').doc(user.uid).set({
-		  email: email,
-		  createdAt: new Date()
-		});
-		sessionStorage.setItem('currentUser', JSON.stringify({ uid: user.uid, username: email.split('@')[0] }));
-		showMessage('registerMessage', '注册成功', 'success');
-		setTimeout(() => hideEntryPage(), 1000);
+		// 发送验证码（这一步会向邮箱发送6位验证码）
+		await auth.signUpWithEmailAndPassword(email, password);
+		// 保存待验证信息
+		pendingRegistrationEmail = email;
+		pendingRegistrationPassword = password;
+		showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
+
+		// 切换界面
+		document.getElementById('registerBtn').style.display = 'none';
+		document.getElementById('verificationCodeGroup').style.display = 'block';
 	  } catch (err) {
 		let msg = err.message;
 		if (msg.includes('email-already-exists')) msg = '该邮箱已被注册';
@@ -1605,6 +1648,11 @@ function initModal() {
   const cancelBtn = document.getElementById('cancelBtn');
   const newAssessmentBtn = document.getElementById('newAssessmentBtn');
   const assessmentForm = document.getElementById('assessmentForm');
+  
+  const verifyBtn = document.getElementById('verifyCodeBtn');
+	if (verifyBtn) {
+		verifyBtn.addEventListener('click', verifyCodeAndComplete);
+	}
   
   // 打开模态框
   newAssessmentBtn.addEventListener('click', () => {
