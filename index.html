@@ -1298,68 +1298,12 @@
     
 // 把 verifyCodeAndComplete 整个替换成这个
 	async function verifyCodeAndComplete() {
-		const code = document.getElementById('verificationCode').value.trim();
-		if (!code) {
-			showMessage('registerMessage', '请输入验证码', 'error');
-			return;
-		}
-
-		if (!pendingRegistrationEmail || !pendingVerificationId) {
-			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
-			return;
-		}
-
-		try {
-			// 1. 用验证码登录（如果邮箱未注册，会自动创建账号）
-			await auth.signInWithEmail({
-				email: pendingRegistrationEmail,
-				verification_code: code,              // verification_code（下划线）
-				verification_id: pendingVerificationId // verification_id（下划线）
-			});
-
-			const user = auth.currentUser;
-
-			// 2. 设置密码（这样以后就可以用邮箱+密码登录了）
-			const password = window.__tempPassword;
-			if (password) {
-				try {
-					// 尝试两种设置密码的方式
-					if (typeof user.updatePassword === 'function') {
-						await user.updatePassword(password);
-					} else if (typeof auth.updatePassword === 'function') {
-						await auth.updatePassword(password);
-					}
-				} catch (e) {
-					console.warn('设置密码失败，但不影响注册', e);
-				}
-				delete window.__tempPassword;   // 用完了就删掉
-			}
-
-			// 3. 保存用户资料（可选，但建议保留）
-			await db.collection('users').doc(user.uid).set({
-				email: pendingRegistrationEmail,
-				createdAt: new Date()
-			});
-
-			// 4. 存储当前登录信息
-			sessionStorage.setItem('currentUser', JSON.stringify({
-				uid: user.uid,
-				username: pendingRegistrationEmail.split('@')[0]
-			}));
-
-			showMessage('registerMessage', '注册成功', 'success');
-			setTimeout(() => hideEntryPage(), 1000);
-		} catch (err) {
-			console.error(err);
-			let msg = '验证失败，请检查验证码是否正确';
-			if (err.message && err.message.includes('code')) msg = '验证码错误或已过期';
-			showMessage('registerMessage', msg, 'error');
-		}
+		showMessage('registerMessage', '请前往邮箱点击验证链接完成注册', 'info');
 	}
 		
     // 注册功能
 	let pendingRegistrationEmail = null;
-	let pendingVerificationId = null;
+	let pendingRegistrationPassword = null;
 
 	async function register() {
 		const email = document.getElementById('regUsername').value.trim();
@@ -1376,22 +1320,19 @@
 		}
 
 		try {
-			// 1. 发送 6 位数字验证码，并获取 verification 对象
-			const verification = await auth.getVerification({ email: email });
-			// 2. 保存关键信息
+			// 这个接口会发一封带验证链接的邮件到邮箱
+			await auth.signUpWithEmailAndPassword(email, password);
 			pendingRegistrationEmail = email;
-			pendingVerificationId = verification.verification_id;   // 注意字段名
-			window.__tempPassword = password;                     // 密码先暂存，登录后设置
+			pendingRegistrationPassword = password;
 
-			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
-
-			// 3. 切换界面
+			showMessage('registerMessage', '验证邮件已发送，请前往邮箱点击验证链接完成注册。', 'success');
+			// 注册成功后，隐藏注册表单，引导用户去邮箱
 			document.getElementById('registerBtn').style.display = 'none';
-			document.getElementById('verificationCodeGroup').style.display = 'block';
+			document.getElementById('verificationCodeGroup').style.display = 'none'; // 不需要验证码输入框了
 		} catch (err) {
-			console.error('发送验证码失败，CloudBase返回的错误：', err);   // 调试用
-			let msg = '发送验证码失败，请稍后重试';
-			if (err.message && err.message.includes('频繁')) msg = '操作过于频繁，请稍后再试';
+			let msg = '注册失败，请稍后重试';
+			if (err.message && err.message.includes('already exists')) msg = '该邮箱已被注册';
+			else if (err.message && err.message.includes('weak')) msg = '密码强度太弱（至少6位）';
 			showMessage('registerMessage', msg, 'error');
 		}
 	}
