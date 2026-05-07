@@ -2761,7 +2761,6 @@ const csvData = assessments.map(assessment => [
 	  if (currentUser !== lastUser) {
 		lastUser = currentUser;
 		if (currentUser) {
-		  // 用户已登录，获取用户名并显示主页面
 		  try {
 			const doc = await db.collection('users').doc(currentUser.uid).get();
 			const userData = doc && doc.data && doc.data.length > 0 ? doc.data[0] : null;
@@ -2769,16 +2768,14 @@ const csvData = assessments.map(assessment => [
 			  uid: currentUser.uid,
 			  username: userData?.username || '用户'
 			}));
-			hideEntryPage();
 		  } catch (err) {
 			console.error('获取用户信息失败', err);
 		  }
 		} else {
-		  // 未登录，显示入口页面
 		  document.body.style.overflow = 'hidden';
 		}
 	  }
-	}, 1000); // 每秒检查一次
+	}, 1000);
 	
 	// 密码强度检测函数（实时显示）
 	function checkPasswordStrength() {
