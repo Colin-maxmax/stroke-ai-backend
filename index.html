@@ -1441,7 +1441,10 @@
 	async function loadAssessments(userId) {
 	  if (!userId) return;
 	  try {
-		const res = await db.collection('assessments').where({ userId: user.uid }).get();
+		const res = await db.collection('assessments')
+		  .where({ userId: userId })    // 之前写成了 user.uid，改为 userId
+		  .orderBy('date', 'desc')
+		  .get();
 		const assessments = res.data.map(doc => ({ ...doc, id: doc._id }));
 		const filterValue = document.getElementById('riskFilter').value;
 		let filtered = assessments;
@@ -2032,7 +2035,7 @@ async function handleAssessmentSubmit(e) {
 
   // 保存到 CloudBase
   try {
-    await db.collection('users').doc(user.uid).collection('assessments').add(assessment);
+    await db.collection('assessments').add(assessment);;
     document.getElementById('assessmentModal').style.display = 'none';
     document.getElementById('assessmentForm').reset();
     showAlert(`风险评估完成！风险等级：${riskLevel}，患病概率：${probabilityPercent}%`, 'success');
@@ -2367,8 +2370,7 @@ async function printAssessment(assessmentId) {
   const user = auth.currentUser;
   if (!user) return;
   try {
-	const doc = await db.collection('users').doc(user.uid)
-	  .collection('assessments').doc(assessmentId).get();
+	const doc = await db.collection('assessments').doc(assessmentId).get();
 	if (!doc.data || doc.data.length === 0) {   // 改用 doc.data 来判断
 	  showAlert('未找到该评估记录', 'error');
 	  return;
@@ -2472,7 +2474,9 @@ async function printAssessment(assessmentId) {
     // 初始化事件监听
     function initEventListeners() {
       // 风险筛选
-      document.getElementById('riskFilter').addEventListener('change', loadAssessments);
+      document.getElementById('riskFilter').addEventListener('change', () => {
+	  loadAssessments(auth.currentUser.uid);
+	});
       
       // 导出数据
       document.getElementById('exportDataBtn').addEventListener('click', exportData);
@@ -2560,8 +2564,8 @@ const csvData = assessments.map(assessment => [
 	  if (!user) return;
 	  try {
 		// 获取该用户的所有评估记录 ID
-		const res = await db.collection('users').doc(user.uid)
-		  .collection('assessments')
+		const res = await db.collection('assessments')
+		  .where({ userId: user.uid })
 		  .get();
 		const batch = db.batch();
 		res.data.forEach(doc => {
@@ -2878,27 +2882,27 @@ document.querySelectorAll('.changelog-header').forEach(header => {
 const AI_API_URL = 'http://localhost:3000/api/chat'; // 如果后端地址不同请修改
 
 // 获取当前用户最新的评估数据（用于上下文）
-async function getCurrentAssessmentContext() {
-  const user = auth.currentUser;
-  if (!user) return null;
-    const res = await db.collection('assessments')
-      .where({ userId: user.uid })
-      .orderBy('date', 'desc')
-      .limit(1)
-      .get();
-    if (res.data.length === 0) return null;
-    const latest = res.data[0];
-    return {
-      age: latest.age,
-      riskLevel: latest.riskLevel,
-      riskFactors: latest.riskFactors,
-      hypertension: latest.hypertension
-    };
-  } catch (err) {
-    console.error(err);
-    return null;
-  }
-}
+	async function getCurrentAssessmentContext() {
+	  const user = auth.currentUser;
+	  if (!user) return null;
+	  try {
+		const res = await db.collection('assessments')
+		  .where({ userId: user.uid })
+		  .orderBy('date', 'desc')
+		  .get();
+		if (res.data.length === 0) return null;
+		const latest = res.data[0];
+		return {
+		  age: latest.age,
+		  riskLevel: latest.riskLevel,
+		  riskFactors: latest.riskFactors,
+		  hypertension: latest.hypertension
+		};
+	  } catch (err) {
+		console.error(err);
+		return null;
+	  }
+	}
 
 // 流式获取 AI 回答并显示
 async function streamAIResponse(question, onChunk, onComplete) {
