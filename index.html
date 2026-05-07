@@ -1302,27 +1302,39 @@
 		showMessage('registerMessage', '请输入验证码', 'error');
 		return;
 	  }
+
+	  if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
+		showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
+		return;
+	  }
+
 	  try {
-		// 验证邮箱验证码（不需要传邮箱，SDK会内部记住）
-		await auth.verifyEmailCode(code);
-		// 验证成功后，直接登录
-		await auth.signInWithEmailAndPassword(pendingRegistrationEmail, pendingRegistrationPassword);
+		// 核心改动：用登录接口 + 验证码参数，一次性完成验证和登录
+		await auth.signInWithEmailAndPassword(
+		  pendingRegistrationEmail,
+		  pendingRegistrationPassword,
+		  { verificationCode: code }   // 验证码写在这里
+		);
+
+		// 登录成功后，像原来一样保存用户资料
 		const user = auth.currentUser;
 		await db.collection('users').doc(user.uid).set({
 		  email: pendingRegistrationEmail,
 		  createdAt: new Date()
 		});
+
 		sessionStorage.setItem('currentUser', JSON.stringify({
 		  uid: user.uid,
 		  username: pendingRegistrationEmail.split('@')[0]
 		}));
+
 		showMessage('registerMessage', '注册成功', 'success');
 		setTimeout(() => hideEntryPage(), 1000);
 	  } catch (err) {
 		console.error(err);
-		let msg = '验证码错误或已过期';
-		if (err.message && err.message.includes('invalid verification code')) {
-		  msg = '验证码错误，请重新获取';
+		let msg = '验证失败，请检查验证码是否正确';
+		if (err.message && err.message.includes('code')) {
+		  msg = '验证码错误或已过期';
 		}
 		showMessage('registerMessage', msg, 'error');
 	  }
@@ -2364,12 +2376,13 @@ async function printAssessment(assessmentId) {
   const user = auth.currentUser;
   if (!user) return;
   try {
-    const doc = await db.collection('users').doc(user.uid)
-      .collection('assessments').doc(assessmentId).get();
-    if (!doc.exists) {
-      showAlert('未找到该评估记录', 'error');
-      return;
-    }
+	const doc = await db.collection('users').doc(user.uid)
+	  .collection('assessments').doc(assessmentId).get();
+	if (!doc.data || doc.data.length === 0) {   // 改用 doc.data 来判断
+	  showAlert('未找到该评估记录', 'error');
+	  return;
+	}
+	const assessment = { id: doc.id, ...doc.data[0] };  // 注意 doc.data 是数组
   const assessment = { id: doc.id, ...doc.data() }; 
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`
