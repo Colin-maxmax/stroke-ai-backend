@@ -1412,20 +1412,15 @@
     }
     
     // 初始化主页面
-    function initMainPage() {
-      // 更新时间显示
-      updateDateTime();
-      setInterval(updateDateTime, 1000);
-      
-      // 加载评估记录
-      loadAssessments();
-      
-      // 初始化模态框
-      initModal();
-      
-      // 初始化事件监听
-      initEventListeners();
-    }
+// 找到 initMainPage 函数，把 userId 传进去
+	function initMainPage() {
+	  updateDateTime();
+	  setInterval(updateDateTime, 1000);
+	  const userId = auth.currentUser.uid;      // 新增
+	  loadAssessments(userId);                  // 传入 userId
+	  initModal();
+	  initEventListeners();
+	}
     
     // 更新时间显示
     function updateDateTime() {
@@ -1443,16 +1438,11 @@
     }
     
     // 加载评估记录
-	async function loadAssessments() {
-	  const user = auth.currentUser;
-	  if (!user) return;
+	async function loadAssessments(userId) {
+	  if (!userId) return;
 	  try {
-		const res = await db.collection('users').doc(user.uid)
-		  .collection('assessments')
-		  .orderBy('date', 'desc')
-		  .get();
+		const res = await db.collection('assessments').where({ userId: user.uid }).get();
 		const assessments = res.data.map(doc => ({ ...doc, id: doc._id }));
-		// 原有的筛选和渲染逻辑
 		const filterValue = document.getElementById('riskFilter').value;
 		let filtered = assessments;
 		if (filterValue !== '全部') {
@@ -1994,6 +1984,7 @@ async function handleAssessmentSubmit(e) {
 
   // ========== 4. 创建评估对象（保存所有字段） ==========
   const assessment = {
+  userId: user.uid,
     patientName,
     age,
     gender,
@@ -2164,8 +2155,7 @@ function stopSpeaking() {
 
 	  try {
 		// 从 CloudBase 查询指定评估记录
-		const docRef = db.collection('users').doc(user.uid)
-		  .collection('assessments').doc(assessmentId);
+		const docRef = db.collection('assessments').doc(assessmentId);
 		const doc = await docRef.get();
 		if (!doc.data || doc.data.length === 0) {   // 正确判断
 		  showAlert('未找到该评估记录', 'error');
@@ -2470,12 +2460,10 @@ async function printAssessment(assessmentId) {
     
 	async function deleteAssessment(assessmentId) {
 	  if (!confirm('确定要删除这条评估记录吗？此操作不可撤销。')) return;
-	  const user = auth.currentUser;
-	  if (!user) return;
 	  try {
-		await db.collection('users').doc(user.uid).collection('assessments').doc(assessmentId).delete();
+		await db.collection('assessments').doc(assessmentId).delete();
 		showAlert('评估记录已删除', 'success');
-		loadAssessments();
+		loadAssessments(auth.currentUser.uid);
 	  } catch (err) {
 		showAlert('删除失败', 'error');
 	  }
@@ -2893,9 +2881,8 @@ const AI_API_URL = 'http://localhost:3000/api/chat'; // 如果后端地址不同
 async function getCurrentAssessmentContext() {
   const user = auth.currentUser;
   if (!user) return null;
-  try {
-    const res = await db.collection('users').doc(user.uid)
-      .collection('assessments')
+    const res = await db.collection('assessments')
+      .where({ userId: user.uid })
       .orderBy('date', 'desc')
       .limit(1)
       .get();
