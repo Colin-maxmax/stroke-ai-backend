@@ -1280,7 +1280,7 @@
 		await auth.signInWithEmailAndPassword(email, password);
 		const user = auth.currentUser;
 		const doc = await db.collection('users').doc(user.uid).get();
-		const userData = doc.data();
+		const userData = doc.data[0];
 		sessionStorage.setItem('currentUser', JSON.stringify({
 		  uid: user.uid,
 		  username: userData?.username || email.split('@')[0]
@@ -2165,12 +2165,11 @@ function stopSpeaking() {
 		const docRef = db.collection('users').doc(user.uid)
 		  .collection('assessments').doc(assessmentId);
 		const doc = await docRef.get();
-		if (!doc.exists) {
+		if (!doc.data || doc.data.length === 0) {   // 正确判断
 		  showAlert('未找到该评估记录', 'error');
 		  return;
 		}
-		const assessment = { id: doc.id, ...doc.data() };
-	  
+		const assessment = { id: doc.id, ...doc.data[0] };
 		const assessmentDate = new Date(assessment.date).toLocaleString('zh-CN');
 		const riskColor = getRiskColor(assessment.riskLevel);
 	  
@@ -2383,7 +2382,6 @@ async function printAssessment(assessmentId) {
 	  return;
 	}
 	const assessment = { id: doc.id, ...doc.data[0] };  // 注意 doc.data 是数组
-  const assessment = { id: doc.id, ...doc.data() }; 
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`
     <html>
@@ -2772,7 +2770,7 @@ const csvData = assessments.map(assessment => [
 		  // 用户已登录，获取用户名并显示主页面
 		  try {
 			const doc = await db.collection('users').doc(currentUser.uid).get();
-			const userData = doc.data();
+			const userData = doc.data[0];
 			sessionStorage.setItem('currentUser', JSON.stringify({
 			  uid: currentUser.uid,
 			  username: userData?.username || '用户'
