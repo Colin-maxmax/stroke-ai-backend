@@ -1304,22 +1304,22 @@
 			return;
 		}
 
-		if (!pendingRegistrationEmail || !pendingVerificationId) {
+		if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
 			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
 			return;
 		}
 
 		try {
-			// 验证码登录（自动注册/登录）
-			await auth.signInWithEmail({
-				email: pendingRegistrationEmail,
-				verificationId: pendingVerificationId,
-				verificationCode: code
-			});
+			// 用邮箱+密码+验证码完成登录，同时验证邮箱
+			await auth.signInWithEmailAndPassword(
+				pendingRegistrationEmail,
+				pendingRegistrationPassword,
+				{ verificationCode: code }
+			);
 
 			const user = auth.currentUser;
 
-			// 保存用户信息（可选）
+			// 保存用户资料
 			await db.collection('users').doc(user.uid).set({
 				email: pendingRegistrationEmail,
 				createdAt: new Date()
@@ -1335,9 +1335,7 @@
 		} catch (err) {
 			console.error(err);
 			let msg = '验证失败，请检查验证码是否正确';
-			if (err.message && err.message.includes('code')) {
-				msg = '验证码错误或已过期';
-			}
+			if (err.message && err.message.includes('code')) msg = '验证码错误或已过期';
 			showMessage('registerMessage', msg, 'error');
 		}
 	}
@@ -1345,7 +1343,6 @@
     // 注册功能
 	let pendingRegistrationEmail = null;
 	let pendingRegistrationPassword = null;
-	let pendingVerificationId = null; 
 
 	async function register() {
 		const email = document.getElementById('regUsername').value.trim();
@@ -1362,19 +1359,19 @@
 		}
 
 		try {
-			// 发送验证码，获取 verificationId
-			const { verificationId } = await auth.sendVerificationCode({ email });
+			// 官方注册接口，会自动发送验证码
+			await auth.signUpWithEmailAndPassword(email, password);
 			pendingRegistrationEmail = email;
-			pendingVerificationId = verificationId;
+			pendingRegistrationPassword = password;
 
 			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
 
-			// 显示验证码输入框
 			document.getElementById('registerBtn').style.display = 'none';
 			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
-			let msg = '发送验证码失败，请稍后重试';
-			if (err.message && err.message.includes('频繁')) msg = '操作过于频繁，请稍后再试';
+			let msg = '注册失败，请稍后重试';
+			if (err.message && err.message.includes('already exists')) msg = '该邮箱已被注册';
+			else if (err.message && err.message.includes('weak')) msg = '密码强度太弱（至少6位）';
 			showMessage('registerMessage', msg, 'error');
 		}
 	}
@@ -2050,7 +2047,7 @@ async function handleAssessmentSubmit(e) {
         showAlert(`⚠️ ${patientName} 被评估为高风险（概率${probabilityPercent}%），${factorText}建议尽快就医检查！`, 'error');
       }, 1000);
     }
-    await loadAssessments();
+    await loadAssessments(user.uid);
   } catch (error) {
     console.error('保存到 CloudBase 失败', error);
     showAlert('保存失败，请检查网络后重试', 'error');
@@ -2496,8 +2493,8 @@ async function printAssessment(assessmentId) {
 		return;
 	  }
 	  try {
-		const res = await db.collection('users').doc(user.uid)
-		  .collection('assessments')
+		const res = await db.collection('assessments')
+		  .where({ userId: user.uid })
 		  .orderBy('date', 'desc')
 		  .get();
 		const assessments = res.data.map(doc => doc);
