@@ -1304,18 +1304,19 @@
 			return;
 		}
 
-		if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
+		if (!pendingRegistrationEmail || !pendingRegistrationPassword || !pendingVerificationId) {
 			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
 			return;
 		}
 
 		try {
-			// 核心改变2：用邮箱+密码+验证码完成登录，此操作会同时验证邮箱并激活账号
-			await auth.signInWithEmailAndPassword(
-				pendingRegistrationEmail,
-				pendingRegistrationPassword,
-				{ verificationCode: code }
-			);
+			// 使用 auth.signUp() 接口，一步完成注册和登录
+			await auth.signUp({
+				email: pendingRegistrationEmail,
+				verification_code: code,
+				verification_token: pendingVerificationId,
+				password: pendingRegistrationPassword
+			});
 
 			const user = auth.currentUser;
 
@@ -1341,7 +1342,9 @@
 	}
 		
     // 注册功能
+	// 声明全局变量
 	let pendingRegistrationEmail = null;
+	let pendingVerificationId = null;
 	let pendingRegistrationPassword = null;
 
 	async function register() {
@@ -1359,20 +1362,22 @@
 		}
 
 		try {
-			// 核心改变1：此接口在控制台配置下，实际发送的是6位验证码
-			await auth.signUpWithEmailAndPassword(email, password);
+			// 获取验证码
+			const verification = await auth.getVerification({ email: email });
 			
+			// 保存关键信息
 			pendingRegistrationEmail = email;
 			pendingRegistrationPassword = password;
+			pendingVerificationId = verification.verification_id; // 保存 verification_id
 
 			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
 
 			document.getElementById('registerBtn').style.display = 'none';
 			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
-			console.error('注册失败，CloudBase返回的错误：', err);
-			let msg = '注册失败，请稍后重试';
-			if (err.message && err.message.includes('already exists')) msg = '该邮箱已被注册';
+			console.error('发送验证码失败，CloudBase返回的错误：', err);
+			let msg = '发送验证码失败，请稍后重试';
+			if (err.message && err.message.includes('频繁')) msg = '操作过于频繁，请稍后再试';
 			showMessage('registerMessage', msg, 'error');
 		}
 	}
