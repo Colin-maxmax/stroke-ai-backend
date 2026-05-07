@@ -1310,7 +1310,7 @@
 		}
 
 		try {
-			// 用邮箱+密码+验证码完成登录（验证码正确后，密码才正式生效）
+			// 核心改变2：用邮箱+密码+验证码完成登录，此操作会同时验证邮箱并激活账号
 			await auth.signInWithEmailAndPassword(
 				pendingRegistrationEmail,
 				pendingRegistrationPassword,
@@ -1359,8 +1359,9 @@
 		}
 
 		try {
-			// 这个接口会自动发 6 位验证码到邮箱，并暂存密码
+			// 核心改变1：此接口在控制台配置下，实际发送的是6位验证码
 			await auth.signUpWithEmailAndPassword(email, password);
+			
 			pendingRegistrationEmail = email;
 			pendingRegistrationPassword = password;
 
@@ -1372,7 +1373,6 @@
 			console.error('注册失败，CloudBase返回的错误：', err);
 			let msg = '注册失败，请稍后重试';
 			if (err.message && err.message.includes('already exists')) msg = '该邮箱已被注册';
-			else if (err.message && err.message.includes('weak')) msg = '密码强度太弱（至少6位）';
 			showMessage('registerMessage', msg, 'error');
 		}
 	}
