@@ -1304,20 +1304,33 @@
 			return;
 		}
 
-		if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
+		if (!pendingRegistrationEmail || !pendingVerificationId) {
 			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
 			return;
 		}
 
 		try {
-			// 用邮箱+密码+验证码完成登录，同时验证邮箱
-			await auth.signInWithEmailAndPassword(
-				pendingRegistrationEmail,
-				pendingRegistrationPassword,
-				{ verificationCode: code }
-			);
+			// 用验证码登录（自动创建账号）
+			await auth.signInWithEmail({
+				email: pendingRegistrationEmail,
+				verificationId: pendingVerificationId,
+				verificationCode: code
+			});
 
 			const user = auth.currentUser;
+
+			// 设置密码（这样以后就能用邮箱+密码登录了）
+			const password = window.__tempPassword;
+			if (password) {
+				try {
+					// 尝试 CloudBase 提供的设置密码方法
+					await user.updatePassword(password);
+				} catch (e) {
+					// 如果上面不行，可以试试 auth.updatePassword(password)
+					await auth.updatePassword(password);
+				}
+				delete window.__tempPassword;
+			}
 
 			// 保存用户资料
 			await db.collection('users').doc(user.uid).set({
@@ -1342,7 +1355,7 @@
 		
     // 注册功能
 	let pendingRegistrationEmail = null;
-	let pendingRegistrationPassword = null;
+	let pendingVerificationId = null;
 
 	async function register() {
 		const email = document.getElementById('regUsername').value.trim();
@@ -1359,19 +1372,18 @@
 		}
 
 		try {
-			// 官方注册接口，会自动发送验证码
-			await auth.signUpWithEmailAndPassword(email, password);
+			// 发送 6 位数字验证码，获取 verificationId
+			const { verificationId } = await auth.sendVerificationCode({ email });
 			pendingRegistrationEmail = email;
-			pendingRegistrationPassword = password;
+			pendingVerificationId = verificationId;
+			window.__tempPassword = password;   // 暂存密码
 
 			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
-
 			document.getElementById('registerBtn').style.display = 'none';
 			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
-			let msg = '注册失败，请稍后重试';
-			if (err.message && err.message.includes('already exists')) msg = '该邮箱已被注册';
-			else if (err.message && err.message.includes('weak')) msg = '密码强度太弱（至少6位）';
+			let msg = '发送验证码失败，请稍后重试';
+			if (err.message && err.message.includes('频繁')) msg = '操作过于频繁，请稍后再试';
 			showMessage('registerMessage', msg, 'error');
 		}
 	}
