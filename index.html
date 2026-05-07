@@ -1298,7 +1298,46 @@
     
 // 把 verifyCodeAndComplete 整个替换成这个
 	async function verifyCodeAndComplete() {
-		showMessage('registerMessage', '请前往邮箱点击验证链接完成注册', 'info');
+		const code = document.getElementById('verificationCode').value.trim();
+		if (!code) {
+			showMessage('registerMessage', '请输入验证码', 'error');
+			return;
+		}
+
+		if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
+			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
+			return;
+		}
+
+		try {
+			// 用邮箱+密码+验证码完成登录（验证码正确后，密码才正式生效）
+			await auth.signInWithEmailAndPassword(
+				pendingRegistrationEmail,
+				pendingRegistrationPassword,
+				{ verificationCode: code }
+			);
+
+			const user = auth.currentUser;
+
+			// 保存用户资料
+			await db.collection('users').doc(user.uid).set({
+				email: pendingRegistrationEmail,
+				createdAt: new Date()
+			});
+
+			sessionStorage.setItem('currentUser', JSON.stringify({
+				uid: user.uid,
+				username: pendingRegistrationEmail.split('@')[0]
+			}));
+
+			showMessage('registerMessage', '注册成功', 'success');
+			setTimeout(() => hideEntryPage(), 1000);
+		} catch (err) {
+			console.error(err);
+			let msg = '验证失败，请检查验证码是否正确';
+			if (err.message && err.message.includes('code')) msg = '验证码错误或已过期';
+			showMessage('registerMessage', msg, 'error');
+		}
 	}
 		
     // 注册功能
@@ -1320,16 +1359,17 @@
 		}
 
 		try {
-			// 这个接口会发一封带验证链接的邮件到邮箱
+			// 这个接口会自动发 6 位验证码到邮箱，并暂存密码
 			await auth.signUpWithEmailAndPassword(email, password);
 			pendingRegistrationEmail = email;
 			pendingRegistrationPassword = password;
 
-			showMessage('registerMessage', '验证邮件已发送，请前往邮箱点击验证链接完成注册。', 'success');
-			// 注册成功后，隐藏注册表单，引导用户去邮箱
+			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
+
 			document.getElementById('registerBtn').style.display = 'none';
-			document.getElementById('verificationCodeGroup').style.display = 'none'; // 不需要验证码输入框了
+			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
+			console.error('注册失败，CloudBase返回的错误：', err);
 			let msg = '注册失败，请稍后重试';
 			if (err.message && err.message.includes('already exists')) msg = '该邮箱已被注册';
 			else if (err.message && err.message.includes('weak')) msg = '密码强度太弱（至少6位）';
