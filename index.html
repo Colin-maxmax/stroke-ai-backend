@@ -692,8 +692,8 @@
       <!-- 登录表单 -->
       <div id="loginForm">
 		<div class="form-group">
-		  <label class="form-label" for="username">邮箱地址</label>
-		  <input type="email" id="username" class="form-input" placeholder="请输入您的邮箱" required>
+			<label class="form-label" for="username">用户名</label>
+			<input type="text" id="username" class="form-input" placeholder="请输入您的用户名" required>
 		</div>
         
         <div class="form-group">
@@ -713,8 +713,8 @@
       <!-- 注册表单 -->
       <div id="registerForm" style="display: none;">
 		<div class="form-group">
-		  <label class="form-label" for="regUsername">邮箱地址</label>
-		  <input type="email" id="regUsername" class="form-input" placeholder="请输入您的邮箱" required>
+			<label class="form-label" for="regUsername">手机号</label>
+			<input type="tel" id="regUsername" class="form-input" placeholder="请输入您的手机号" required>
 		</div>
 
 		<div class="form-group">
@@ -731,7 +731,7 @@
 		<div id="verificationCodeGroup" style="display: none;">
 		  <div class="form-group">
 			<label class="form-label">验证码</label>
-			<input type="text" id="verificationCode" class="form-input" placeholder="请输入邮箱收到的6位验证码">
+			<input type="text" id="verificationCode" class="form-input" placeholder="请输入手机收到的6位验证码">
 		  </div>
 		  <button type="button" id="verifyCodeBtn" class="enter-btn" style="background: #4caf50;">验证并完成注册</button>
 		</div>
@@ -1268,76 +1268,76 @@
     
     // 登录功能
 	async function login() {
-	  const email = document.getElementById('username').value.trim();
-	  const password = document.getElementById('password').value.trim();
+		const username = document.getElementById('username').value.trim(); // 输入用户名
+		const password = document.getElementById('password').value.trim();
 
-	  if (!email || !password) {
-		showMessage('loginMessage', '请输入邮箱和密码', 'error');
-		return;
-	  }
-
-	  try {
-		await auth.signInWithEmailAndPassword(email, password);
-		const user = auth.currentUser;
-		const doc = await db.collection('users').doc(user.uid).get();
-		const userData = doc.data && doc.data[0] ? doc.data[0] : null;
-		sessionStorage.setItem('currentUser', JSON.stringify({
-		  uid: user.uid,
-		  username: userData?.username || email.split('@')[0]
-		}));
-		showMessage('loginMessage', '登录成功', 'success');
-		setTimeout(() => hideEntryPage(), 1000);
-	  } catch (err) {
-		let msg = '邮箱或密码错误';
-		if (err.message && err.message.includes('not verified')) {
-		  msg = '邮箱尚未验证，请先查收验证邮件，输入验证码完成注册。';
+		if (!username || !password) {
+			showMessage('loginMessage', '请输入用户名和密码', 'error');
+			return;
 		}
-		showMessage('loginMessage', msg, 'error');
-	  }
+
+		try {
+			// 用绑定的用户名密码登录
+			await auth.signInWithUsernameAndPassword({ username, password });
+			
+			const user = auth.currentUser;
+			sessionStorage.setItem('currentUser', JSON.stringify({
+				uid: user.uid,
+				username: username
+			}));
+			
+			showMessage('loginMessage', '登录成功', 'success');
+			setTimeout(() => hideEntryPage(), 1000);
+		} catch (err) {
+			console.error('登录失败', err);
+			showMessage('loginMessage', '用户名或密码不正确', 'error');
+		}
 	}
     
 // 把 verifyCodeAndComplete 整个替换成这个
 	async function verifyCodeAndComplete() {
 		const code = document.getElementById('verificationCode').value.trim();
+		const username = document.getElementById('regUsername').value.trim(); // 用户想设的用户名
+		
 		if (!code) {
 			showMessage('registerMessage', '请输入验证码', 'error');
 			return;
 		}
 
-		if (!pendingRegistrationEmail || !pendingRegistrationPassword || !pendingVerificationId) {
-			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
-			return;
-		}
-
 		try {
-			// 使用 auth.signUp() 接口，一步完成注册和登录
-			await auth.signUp({
-				email: pendingRegistrationEmail,
-				verification_code: code,
-				verification_token: pendingVerificationId,
-				password: pendingRegistrationPassword
+			// 1. 用短信验证码登录（也是注册）
+			await auth.signInWithPhoneCode({
+				phone_number: pendingRegistrationPhone,  // 改为正确的变量名
+				verification_id: pendingVerificationId,
+				verification_code: code
 			});
 
 			const user = auth.currentUser;
 
-			// 保存用户资料
+			// 2. 关键一步：绑定用户名和密码
+			// 绑定成功后，以后就能用这个用户名和密码跨设备登录了
+			await user.link({
+				username: username,
+				password: document.getElementById('regPassword').value // 用注册表单里的密码
+			});
+
+			// 3. 保存资料
 			await db.collection('users').doc(user.uid).set({
-				email: pendingRegistrationEmail,
+				username: username,
+				phone: pendingRegistrationPhone,
 				createdAt: new Date()
 			});
 
 			sessionStorage.setItem('currentUser', JSON.stringify({
 				uid: user.uid,
-				username: pendingRegistrationEmail.split('@')[0]
+				username: username
 			}));
 
 			showMessage('registerMessage', '注册成功', 'success');
 			setTimeout(() => hideEntryPage(), 1000);
 		} catch (err) {
 			console.error(err);
-			let msg = '验证失败，请检查验证码是否正确';
-			if (err.message && err.message.includes('code')) msg = '验证码错误或已过期';
-			showMessage('registerMessage', msg, 'error');
+			showMessage('registerMessage', '验证失败，请检查', 'error');
 		}
 	}
 		
@@ -1346,39 +1346,32 @@
 	let pendingRegistrationEmail = null;
 	let pendingVerificationId = null;
 	let pendingRegistrationPassword = null;
+	let pendingRegistrationPhone = null;
 
 	async function register() {
-		const email = document.getElementById('regUsername').value.trim();
-		const password = document.getElementById('regPassword').value.trim();
-		const confirm = document.getElementById('confirmPassword').value.trim();
-
-		if (!email || !password || password !== confirm) {
-			showMessage('registerMessage', '邮箱/密码无效或两次密码不一致', 'error');
-			return;
-		}
-		if (password.length < 6) {
-			showMessage('registerMessage', '密码长度至少6位', 'error');
+		const phoneNumber = document.getElementById('regUsername').value.trim(); // 输入框填手机号
+		
+		if (!phoneNumber) {
+			showMessage('registerMessage', '请输入手机号', 'error');
 			return;
 		}
 
 		try {
-			// 获取验证码
-			const verification = await auth.getVerification({ email: email });
+			// 1. 发送短信验证码
+			const verification = await auth.getVerification({ phone_number: phoneNumber });
 			
-			// 保存关键信息
-			pendingRegistrationEmail = email;
-			pendingRegistrationPassword = password;
-			pendingVerificationId = verification.verification_id; // 保存 verification_id
+			// 2. 保存手机号，待验证
+			pendingRegistrationPhone = phoneNumber; 
+			pendingVerificationId = verification.verification_id;
 
-			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
+			showMessage('registerMessage', '验证码已发送到手机，请查收', 'success');
 
+			// 切换界面，显示验证码输入框
 			document.getElementById('registerBtn').style.display = 'none';
 			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
-			console.error('发送验证码失败，CloudBase返回的错误：', err);
-			let msg = '发送验证码失败，请稍后重试';
-			if (err.message && err.message.includes('频繁')) msg = '操作过于频繁，请稍后再试';
-			showMessage('registerMessage', msg, 'error');
+			console.error('发送验证码失败', err);
+			showMessage('registerMessage', '发送失败，请稍后重试', 'error');
 		}
 	}
     
