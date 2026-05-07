@@ -1297,47 +1297,50 @@
 	}
     
 	async function verifyCodeAndComplete() {
-	  const code = document.getElementById('verificationCode').value.trim();
-	  if (!code) {
-		showMessage('registerMessage', '请输入验证码', 'error');
-		return;
-	  }
-
-	  if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
-		showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
-		return;
-	  }
-
-	  try {
-		// 核心改动：用登录接口 + 验证码参数，一次性完成验证和登录
-		await auth.signInWithEmailAndPassword(
-		  pendingRegistrationEmail,
-		  pendingRegistrationPassword,
-		  { verificationCode: code }   // 验证码写在这里
-		);
-
-		// 登录成功后，像原来一样保存用户资料
-		const user = auth.currentUser;
-		await db.collection('users').doc(user.uid).set({
-		  email: pendingRegistrationEmail,
-		  createdAt: new Date()
-		});
-
-		sessionStorage.setItem('currentUser', JSON.stringify({
-		  uid: user.uid,
-		  username: pendingRegistrationEmail.split('@')[0]
-		}));
-
-		showMessage('registerMessage', '注册成功', 'success');
-		setTimeout(() => hideEntryPage(), 1000);
-	  } catch (err) {
-		console.error(err);
-		let msg = '验证失败，请检查验证码是否正确';
-		if (err.message && err.message.includes('code')) {
-		  msg = '验证码错误或已过期';
+		const code = document.getElementById('verificationCode').value.trim();
+		if (!code) {
+			showMessage('registerMessage', '请输入验证码', 'error');
+			return;
 		}
-		showMessage('registerMessage', msg, 'error');
-	  }
+
+		if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
+			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
+			return;
+		}
+
+		try {
+			// 第一步：用验证码进行登录
+			await auth.signInWithEmail({
+				email: pendingRegistrationEmail,
+				verificationCode: code
+			});
+
+			const user = auth.currentUser;
+
+			// 第二步：为用户设置密码，用于后续的密码登录
+			await user.updatePassword(pendingRegistrationPassword);
+
+			// 保存用户资料到数据库
+			await db.collection('users').doc(user.uid).set({
+				email: pendingRegistrationEmail,
+				createdAt: new Date()
+			});
+
+			sessionStorage.setItem('currentUser', JSON.stringify({
+				uid: user.uid,
+				username: pendingRegistrationEmail.split('@')[0]
+			}));
+
+			showMessage('registerMessage', '注册成功', 'success');
+			setTimeout(() => hideEntryPage(), 1000);
+		} catch (err) {
+			console.error(err);
+			let msg = '验证失败，请检查验证码是否正确';
+			if (err.message && err.message.includes('code')) {
+				msg = '验证码错误或已过期';
+			}
+			showMessage('registerMessage', msg, 'error');
+		}
 	}
 		
     // 注册功能
