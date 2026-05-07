@@ -1303,24 +1303,25 @@
 			return;
 		}
 
-		if (!pendingRegistrationEmail || !pendingRegistrationPassword) {
+		if (!pendingRegistrationEmail || !pendingRegistrationPassword || !pendingVerificationId) {
 			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
 			return;
 		}
 
 		try {
-			// 第一步：用验证码进行登录
+			// 使用验证码 + verificationId 完成登录
 			await auth.signInWithEmail({
 				email: pendingRegistrationEmail,
+				verificationId: pendingVerificationId,
 				verificationCode: code
 			});
 
 			const user = auth.currentUser;
 
-			// 第二步：为用户设置密码，用于后续的密码登录
+			// 设置密码（用于后续密码登录）
 			await user.updatePassword(pendingRegistrationPassword);
 
-			// 保存用户资料到数据库
+			// 保存用户资料
 			await db.collection('users').doc(user.uid).set({
 				email: pendingRegistrationEmail,
 				createdAt: new Date()
@@ -1346,38 +1347,40 @@
     // 注册功能
 	let pendingRegistrationEmail = null;
 	let pendingRegistrationPassword = null;
+	let pendingVerificationId = null;   // 新增
 
 	async function register() {
-	  const email = document.getElementById('regUsername').value.trim();
-	  const password = document.getElementById('regPassword').value.trim();
-	  const confirm = document.getElementById('confirmPassword').value.trim();
+		const email = document.getElementById('regUsername').value.trim();
+		const password = document.getElementById('regPassword').value.trim();
+		const confirm = document.getElementById('confirmPassword').value.trim();
 
-	  if (!email || !password || password !== confirm) {
-		showMessage('registerMessage', '邮箱/密码无效或两次密码不一致', 'error');
-		return;
-	  }
-	  if (password.length < 6) {
-		showMessage('registerMessage', '密码长度至少6位', 'error');
-		return;
-	  }
+		if (!email || !password || password !== confirm) {
+			showMessage('registerMessage', '邮箱/密码无效或两次密码不一致', 'error');
+			return;
+		}
+		if (password.length < 6) {
+			showMessage('registerMessage', '密码长度至少6位', 'error');
+			return;
+		}
 
-	  try {
-		// 发送验证码（这一步会向邮箱发送6位验证码）
-		await auth.signUpWithEmailAndPassword(email, password);
-		// 保存待验证信息
-		pendingRegistrationEmail = email;
-		pendingRegistrationPassword = password;
-		showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
+		try {
+			// 发送验证码，并获取 verificationId
+			const result = await auth.sendVerificationCode({ email });
+			pendingRegistrationEmail = email;
+			pendingRegistrationPassword = password;
+			pendingVerificationId = result.verification_id;   // 保存 verificationId
 
-		// 切换界面
-		document.getElementById('registerBtn').style.display = 'none';
-		document.getElementById('verificationCodeGroup').style.display = 'block';
-	  } catch (err) {
-		let msg = err.message;
-		if (msg.includes('email-already-exists')) msg = '该邮箱已被注册';
-		else if (msg.includes('weak-password')) msg = '密码强度太弱（至少6位）';
-		showMessage('registerMessage', msg, 'error');
-	  }
+			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
+
+			// 切换界面
+			document.getElementById('registerBtn').style.display = 'none';
+			document.getElementById('verificationCodeGroup').style.display = 'block';
+		} catch (err) {
+			let msg = err.message;
+			if (msg.includes('email-already-exists')) msg = '该邮箱已被注册';
+			else if (msg.includes('weak-password')) msg = '密码强度太弱（至少6位）';
+			showMessage('registerMessage', msg, 'error');
+		}
 	}
     
     // 入口页面功能
