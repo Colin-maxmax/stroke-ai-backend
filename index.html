@@ -1296,6 +1296,7 @@
 	  }
 	}
     
+// 把 verifyCodeAndComplete 整个替换成这个
 	async function verifyCodeAndComplete() {
 		const code = document.getElementById('verificationCode').value.trim();
 		if (!code) {
@@ -1303,25 +1304,22 @@
 			return;
 		}
 
-		if (!pendingRegistrationEmail || !pendingVerificationInfo) {
+		if (!pendingRegistrationEmail || !pendingVerificationId) {
 			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
 			return;
 		}
 
 		try {
-			// 第二步：使用保存的验证信息、验证码和邮箱进行登录
+			// 验证码登录（自动注册/登录）
 			await auth.signInWithEmail({
-				verificationInfo: pendingVerificationInfo,
-				verificationCode: code,
-				email: pendingRegistrationEmail
+				email: pendingRegistrationEmail,
+				verificationId: pendingVerificationId,
+				verificationCode: code
 			});
 
 			const user = auth.currentUser;
 
-			// 为用户设置密码，用于后续的密码登录
-			await user.updatePassword(pendingRegistrationPassword);
-
-			// 保存用户资料
+			// 保存用户信息（可选）
 			await db.collection('users').doc(user.uid).set({
 				email: pendingRegistrationEmail,
 				createdAt: new Date()
@@ -1347,7 +1345,6 @@
     // 注册功能
 	let pendingRegistrationEmail = null;
 	let pendingRegistrationPassword = null;
-	let pendingVerificationInfo = null; // 用于保存验证信息对象
 
 	async function register() {
 		const email = document.getElementById('regUsername').value.trim();
@@ -1364,17 +1361,14 @@
 		}
 
 		try {
-			// 第一步：发送验证码，并保存返回的 verificationInfo 对象
-			const verificationInfo = await auth.getVerification({ email });
-			
-			// 保存用户输入的信息和服务器返回的验证信息
+			// 发送验证码，获取 verificationId
+			const { verificationId } = await auth.sendVerificationCode({ email });
 			pendingRegistrationEmail = email;
-			pendingRegistrationPassword = password;
-			pendingVerificationInfo = verificationInfo;
+			pendingVerificationId = verificationId;
 
 			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
 
-			// 切换界面
+			// 显示验证码输入框
 			document.getElementById('registerBtn').style.display = 'none';
 			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
