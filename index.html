@@ -1303,22 +1303,22 @@
 			return;
 		}
 
-		if (!pendingRegistrationEmail || !pendingRegistrationPassword || !pendingVerificationId) {
+		if (!pendingRegistrationEmail || !pendingVerificationInfo) {
 			showMessage('registerMessage', '注册信息已失效，请重新注册', 'error');
 			return;
 		}
 
 		try {
-			// 使用验证码 + verificationId 完成登录
+			// 第二步：使用保存的验证信息、验证码和邮箱进行登录
 			await auth.signInWithEmail({
-				email: pendingRegistrationEmail,
-				verificationId: pendingVerificationId,
-				verificationCode: code
+				verificationInfo: pendingVerificationInfo,
+				verificationCode: code,
+				email: pendingRegistrationEmail
 			});
 
 			const user = auth.currentUser;
 
-			// 设置密码（用于后续密码登录）
+			// 为用户设置密码，用于后续的密码登录
 			await user.updatePassword(pendingRegistrationPassword);
 
 			// 保存用户资料
@@ -1347,7 +1347,7 @@
     // 注册功能
 	let pendingRegistrationEmail = null;
 	let pendingRegistrationPassword = null;
-	let pendingVerificationId = null;   // 新增
+	let pendingVerificationInfo = null; // 用于保存验证信息对象
 
 	async function register() {
 		const email = document.getElementById('regUsername').value.trim();
@@ -1364,11 +1364,13 @@
 		}
 
 		try {
-			// 发送验证码，并获取 verificationId
-			const result = await auth.sendVerificationCode({ email });
+			// 第一步：发送验证码，并保存返回的 verificationInfo 对象
+			const verificationInfo = await auth.getVerification({ email });
+			
+			// 保存用户输入的信息和服务器返回的验证信息
 			pendingRegistrationEmail = email;
 			pendingRegistrationPassword = password;
-			pendingVerificationId = result.verification_id;   // 保存 verificationId
+			pendingVerificationInfo = verificationInfo;
 
 			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
 
@@ -1376,9 +1378,8 @@
 			document.getElementById('registerBtn').style.display = 'none';
 			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
-			let msg = err.message;
-			if (msg.includes('email-already-exists')) msg = '该邮箱已被注册';
-			else if (msg.includes('weak-password')) msg = '密码强度太弱（至少6位）';
+			let msg = '发送验证码失败，请稍后重试';
+			if (err.message && err.message.includes('频繁')) msg = '操作过于频繁，请稍后再试';
 			showMessage('registerMessage', msg, 'error');
 		}
 	}
