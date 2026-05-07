@@ -1280,7 +1280,7 @@
 		await auth.signInWithEmailAndPassword(email, password);
 		const user = auth.currentUser;
 		const doc = await db.collection('users').doc(user.uid).get();
-		const userData = doc.data[0];
+		const userData = doc.data && doc.data[0] ? doc.data[0] : null;
 		sessionStorage.setItem('currentUser', JSON.stringify({
 		  uid: user.uid,
 		  username: userData?.username || email.split('@')[0]
@@ -2771,7 +2771,7 @@ const csvData = assessments.map(assessment => [
 		  // 用户已登录，获取用户名并显示主页面
 		  try {
 			const doc = await db.collection('users').doc(currentUser.uid).get();
-			const userData = doc.data[0];
+			const userData = doc && doc.data && doc.data.length > 0 ? doc.data[0] : null;
 			sessionStorage.setItem('currentUser', JSON.stringify({
 			  uid: currentUser.uid,
 			  username: userData?.username || '用户'
