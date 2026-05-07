@@ -1310,34 +1310,38 @@
 		}
 
 		try {
-			// 用验证码登录（自动创建账号）
+			// 1. 用验证码登录（如果邮箱未注册，会自动创建账号）
 			await auth.signInWithEmail({
 				email: pendingRegistrationEmail,
-				verificationId: pendingVerificationId,
-				verificationCode: code
+				verificationCode: code,              // 用户输入的 6 位验证码
+				verificationId: pendingVerificationId // 从 getVerification 得到的 ID
 			});
 
 			const user = auth.currentUser;
 
-			// 设置密码（这样以后就能用邮箱+密码登录了）
+			// 2. 设置密码（这样以后就可以用邮箱+密码登录了）
 			const password = window.__tempPassword;
 			if (password) {
 				try {
-					// 尝试 CloudBase 提供的设置密码方法
-					await user.updatePassword(password);
+					// 尝试两种设置密码的方式
+					if (typeof user.updatePassword === 'function') {
+						await user.updatePassword(password);
+					} else if (typeof auth.updatePassword === 'function') {
+						await auth.updatePassword(password);
+					}
 				} catch (e) {
-					// 如果上面不行，可以试试 auth.updatePassword(password)
-					await auth.updatePassword(password);
+					console.warn('设置密码失败，但不影响注册', e);
 				}
-				delete window.__tempPassword;
+				delete window.__tempPassword;   // 用完了就删掉
 			}
 
-			// 保存用户资料
+			// 3. 保存用户资料（可选，但建议保留）
 			await db.collection('users').doc(user.uid).set({
 				email: pendingRegistrationEmail,
 				createdAt: new Date()
 			});
 
+			// 4. 存储当前登录信息
 			sessionStorage.setItem('currentUser', JSON.stringify({
 				uid: user.uid,
 				username: pendingRegistrationEmail.split('@')[0]
@@ -1372,16 +1376,20 @@
 		}
 
 		try {
-			// 发送 6 位数字验证码，获取 verificationId
-			const { verificationId } = await auth.sendVerificationCode({ email });
+			// 1. 发送 6 位数字验证码，并获取 verification 对象
+			const verification = await auth.getVerification({ email: email });
+			// 2. 保存关键信息
 			pendingRegistrationEmail = email;
-			pendingVerificationId = verificationId;
-			window.__tempPassword = password;   // 暂存密码
+			pendingVerificationId = verification.verification_id;   // 注意字段名
+			window.__tempPassword = password;                     // 密码先暂存，登录后设置
 
 			showMessage('registerMessage', '验证码已发送至邮箱，请查收', 'success');
+
+			// 3. 切换界面
 			document.getElementById('registerBtn').style.display = 'none';
 			document.getElementById('verificationCodeGroup').style.display = 'block';
 		} catch (err) {
+			console.error('发送验证码失败，CloudBase返回的错误：', err);   // 调试用
 			let msg = '发送验证码失败，请稍后重试';
 			if (err.message && err.message.includes('频繁')) msg = '操作过于频繁，请稍后再试';
 			showMessage('registerMessage', msg, 'error');
