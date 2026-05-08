@@ -692,8 +692,8 @@
       <!-- 登录表单 -->
       <div id="loginForm">
 		<div class="form-group">
-			<label class="form-label" for="username">用户名</label>
-			<input type="text" id="username" class="form-input" placeholder="请输入您的用户名" required>
+			<label class="form-label" for="username">邮箱</label>
+			<input type="text" id="username" class="form-input" placeholder="请输入您的邮箱" required>
 		</div>
         
         <div class="form-group">
@@ -1236,23 +1236,11 @@
     }
     
     // 显示注册表单
-    function showRegisterForm() {
-      document.getElementById('loginForm').style.display = 'none';
-      document.getElementById('registerForm').style.display = 'block';
-      hideMessage('loginMessage');
-      hideMessage('registerMessage');
-      
-      // 清空注册表单
-      document.getElementById('regUsername').value = '';
-      document.getElementById('regPassword').value = '';
-      document.getElementById('confirmPassword').value = '';
-	  
-	    const verifyBtn = document.getElementById('verifyCodeBtn');
-	  if (verifyBtn) {
-		verifyBtn.removeEventListener('click', verifyCodeAndComplete);
-		verifyBtn.addEventListener('click', verifyCodeAndComplete);
-	  }
-    }
+	function showRegisterForm() {
+		// 现在注册已集成到登录里，直接显示登录表单即可
+		showLoginForm();
+		showMessage('loginMessage', '首次输入邮箱和密码将自动注册', 'info');
+	}
     
     // 显示登录表单
     function showLoginForm() {
@@ -1267,32 +1255,59 @@
     }
     
     // 登录功能
+// 直接替换 login 函数
 	async function login() {
-		const username = document.getElementById('username').value.trim(); // 输入用户名
+		const email = document.getElementById('username').value.trim();
 		const password = document.getElementById('password').value.trim();
 
-		if (!username || !password) {
-			showMessage('loginMessage', '请输入用户名和密码', 'error');
+		if (!email || !password) {
+			showMessage('loginMessage', '请输入邮箱和密码', 'error');
 			return;
 		}
 
 		try {
-			// 用绑定的用户名密码登录
-			await auth.signInWithUsernameAndPassword({ username, password });
-			
+			// 优先尝试邮箱密码登录（已在其他地方注册过的用户）
+			await auth.signInWithEmailAndPassword(email, password);
 			const user = auth.currentUser;
 			sessionStorage.setItem('currentUser', JSON.stringify({
 				uid: user.uid,
-				username: username
+				username: email.split('@')[0]
 			}));
-			
 			showMessage('loginMessage', '登录成功', 'success');
 			setTimeout(() => hideEntryPage(), 1000);
 		} catch (err) {
-			console.error('登录失败', err);
-			showMessage('loginMessage', '用户名或密码不正确', 'error');
+			// 登录失败，自动注册
+			console.error('登录失败，开始自动注册', err);
+			try {
+				// 先匿名登录
+				await auth.signInAnonymously();
+				const user = auth.currentUser;
+				
+				// 绑定邮箱
+				await user.updateEmail(email);
+				
+				// 设置密码（等待邮箱验证后再调用，这里先匿名+缓存密码）
+				await user.updatePassword(password);
+
+				// 保存用户资料
+				await db.collection('users').doc(user.uid).set({
+					email: email,
+					username: email.split('@')[0],
+					createdAt: new Date()
+				});
+
+				sessionStorage.setItem('currentUser', JSON.stringify({
+					uid: user.uid,
+					username: email.split('@')[0]
+				}));
+				showMessage('loginMessage', '注册并登录成功', 'success');
+				setTimeout(() => hideEntryPage(), 1000);
+			} catch (regErr) {
+				console.error('注册失败', regErr);
+				showMessage('loginMessage', '注册失败，请稍后重试', 'error');
+			}
 		}
-	}
+}
     
 // 把 verifyCodeAndComplete 整个替换成这个
 	async function verifyCodeAndComplete() {
@@ -1351,10 +1366,7 @@
 		
     // 注册功能
 	// 声明全局变量
-	let pendingRegistrationEmail = null;
-	let pendingVerificationId = null;
-	let pendingRegistrationPassword = null;
-	let pendingRegistrationPhone = null;
+
 
 	async function register() {
 		const phoneNumber = document.getElementById('regUsername').value.trim(); // 输入框填手机号
@@ -1670,13 +1682,6 @@ function initModal() {
   const newAssessmentBtn = document.getElementById('newAssessmentBtn');
   const assessmentForm = document.getElementById('assessmentForm');
   
-	const verifyBtn = document.getElementById('verifyCodeBtn');
-	if (verifyBtn) {
-	  console.log('verifyCodeBtn found');
-	  verifyBtn.addEventListener('click', verifyCodeAndComplete);
-	} else {
-	  console.error('verifyCodeBtn not found');
-	}
   
   // 打开模态框
   newAssessmentBtn.addEventListener('click', () => {
@@ -2746,16 +2751,13 @@ const csvData = assessments.map(assessment => [
     }
     
     // 按回车键也可以登录/注册
-    document.addEventListener('keydown', function(event) {
-      if (event.key === 'Enter') {
-        // 判断当前显示的是哪个表单
-        if (document.getElementById('loginForm').style.display !== 'none') {
-          login();
-        } else if (document.getElementById('registerForm').style.display !== 'none') {
-          register();
-        }
-      }
-    });
+	document.addEventListener('keydown', function(event) {
+	  if (event.key === 'Enter') {
+		if (document.getElementById('loginForm').style.display !== 'none') {
+		  login();
+		}
+	  }
+	});
 	
 	// 在 window.onload 开头添加
 // 轮询检查登录状态（替代 onAuthStateChanged）
