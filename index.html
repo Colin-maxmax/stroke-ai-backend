@@ -1452,24 +1452,29 @@
     
     // 加载评估记录
 	async function loadAssessments(userId) {
-	  if (!userId) return;
-	  try {
-		const res = await db.collection('assessments')
-		  .where({ userId: userId })    // 之前写成了 user.uid，改为 userId
-		  .orderBy('date', 'desc')
-		  .get();
-		const assessments = res.data.map(doc => ({ ...doc, id: doc._id }));
-		const filterValue = document.getElementById('riskFilter').value;
-		let filtered = assessments;
-		if (filterValue !== '全部') {
-		  filtered = assessments.filter(a => a.riskLevel === filterValue);
+		if (!userId) return;
+		try {
+			const res = await db.collection('assessments')
+				.where({ userId: userId })
+				.orderBy('date', 'desc')
+				.get();
+			
+			// 安全判断：如果 res.data 不是数组，当成空数组处理
+			const assessments = Array.isArray(res.data) 
+				? res.data.map(doc => ({ ...doc, id: doc._id })) 
+				: [];
+			
+			const filterValue = document.getElementById('riskFilter').value;
+			let filtered = assessments;
+			if (filterValue !== '全部') {
+				filtered = assessments.filter(a => a.riskLevel === filterValue);
+			}
+			renderAssessments(filtered);
+			updateStats(assessments);
+		} catch (err) {
+			console.error('加载失败', err);
+			showAlert('加载评估记录失败', 'error');
 		}
-		renderAssessments(filtered);
-		updateStats(assessments);
-	  } catch (err) {
-		console.error('加载失败', err);
-		showAlert('加载评估记录失败', 'error');
-	  }
 	}
     
 		// 渲染评估记录
@@ -2883,26 +2888,26 @@ const AI_API_URL = 'http://localhost:3000/api/chat'; // 如果后端地址不同
 
 // 获取当前用户最新的评估数据（用于上下文）
 	async function getCurrentAssessmentContext() {
-	  const user = auth.currentUser;
-	  if (!user) return null;
-	  try {
-		const res = await db.collection('assessments')
-		  .where({ userId: user.uid })
-		  .orderBy('date', 'desc')
-		  .get();
-		if (res.data.length === 0) return null;
-		const latest = res.data[0];
-		return {
-		  age: latest.age,
-		  riskLevel: latest.riskLevel,
-		  riskFactors: latest.riskFactors,
-		  hypertension: latest.hypertension
-		};
-	  } catch (err) {
-		console.error(err);
-		return null;
-	  }
-	}
+		const user = auth.currentUser;
+		if (!user) return null;
+		try {
+			const res = await db.collection('assessments')
+				.where({ userId: user.uid })
+				.orderBy('date', 'desc')
+				.get();
+			if (!Array.isArray(res.data) || res.data.length === 0) return null;
+			const latest = res.data[0];
+			return {
+				age: latest.age,
+				riskLevel: latest.riskLevel,
+				riskFactors: latest.riskFactors,
+				hypertension: latest.hypertension
+			};
+		} catch (err) {
+			console.error(err);
+			return null;
+		}
+}
 
 // 流式获取 AI 回答并显示
 async function streamAIResponse(question, onChunk, onComplete) {
