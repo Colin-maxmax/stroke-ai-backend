@@ -1272,7 +1272,7 @@
 
 		try {
 			// 先尝试登录已有账号
-			await auth.signInWithUsernameAndPassword({ username, password });
+			await auth.signInWithUsernameAndPassword(username, password);
 			const user = auth.currentUser;
 			sessionStorage.setItem('currentUser', JSON.stringify({
 				uid: user.uid,
@@ -1284,7 +1284,7 @@
 			// 登录失败，视为新用户，自动注册
 			if (err.error_code === 4043) {
 				try {
-					await auth.signUpWithUsernameAndPassword({ username, password });
+					await auth.signUpWithUsernameAndPassword(username, password);
 					const user = auth.currentUser;
 					await db.collection('users').doc(user.uid).set({
 						username: username,
