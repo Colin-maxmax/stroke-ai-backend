@@ -692,8 +692,8 @@
       <!-- 登录表单 -->
       <div id="loginForm">
 		<div class="form-group">
-			<label class="form-label" for="username">邮箱</label>
-			<input type="text" id="username" class="form-input" placeholder="请输入您的邮箱" required>
+			<label class="form-label" for="username">用户名</label>
+			<input type="text" id="username" class="form-input" placeholder="请输入您的用户名" required>
 		</div>
         
         <div class="form-group">
@@ -1256,55 +1256,53 @@
     
     // 登录功能
 // 直接替换 login 函数
+// 登录 / 自动注册一体化函数
 	async function login() {
-		const email = document.getElementById('username').value.trim();
+		const username = document.getElementById('username').value.trim();
 		const password = document.getElementById('password').value.trim();
 
-		if (!email || !password) {
-			showMessage('loginMessage', '请输入邮箱和密码', 'error');
+		if (!username || !password) {
+			showMessage('loginMessage', '请输入用户名和密码', 'error');
+			return;
+		}
+		if (password.length < 6) {
+			showMessage('loginMessage', '密码长度至少6位', 'error');
 			return;
 		}
 
 		try {
-			// 优先尝试邮箱密码登录（已在其他地方注册过的用户）
-			await auth.signInWithEmailAndPassword(email, password);
+			// 先尝试登录已有账号
+			await auth.signInWithUsernameAndPassword({ username, password });
 			const user = auth.currentUser;
 			sessionStorage.setItem('currentUser', JSON.stringify({
 				uid: user.uid,
-				username: email.split('@')[0]
+				username: username
 			}));
 			showMessage('loginMessage', '登录成功', 'success');
 			setTimeout(() => hideEntryPage(), 1000);
 		} catch (err) {
-			// 登录失败，自动注册
-			console.error('登录失败，开始自动注册', err);
-			try {
-				// 先匿名登录
-				await auth.signInAnonymously();
-				const user = auth.currentUser;
-				
-				// 绑定邮箱
-				await user.updateEmail(email);
-				
-				// 设置密码（等待邮箱验证后再调用，这里先匿名+缓存密码）
-				await user.updatePassword(password);
-
-				// 保存用户资料
-				await db.collection('users').doc(user.uid).set({
-					email: email,
-					username: email.split('@')[0],
-					createdAt: new Date()
-				});
-
-				sessionStorage.setItem('currentUser', JSON.stringify({
-					uid: user.uid,
-					username: email.split('@')[0]
-				}));
-				showMessage('loginMessage', '注册并登录成功', 'success');
-				setTimeout(() => hideEntryPage(), 1000);
-			} catch (regErr) {
-				console.error('注册失败', regErr);
-				showMessage('loginMessage', '注册失败，请稍后重试', 'error');
+			// 登录失败，视为新用户，自动注册
+			if (err.error_code === 4043) {
+				try {
+					await auth.signUpWithUsernameAndPassword({ username, password });
+					const user = auth.currentUser;
+					await db.collection('users').doc(user.uid).set({
+						username: username,
+						createdAt: new Date()
+					});
+					sessionStorage.setItem('currentUser', JSON.stringify({
+						uid: user.uid,
+						username: username
+					}));
+					showMessage('loginMessage', '注册并登录成功', 'success');
+					setTimeout(() => hideEntryPage(), 1000);
+				} catch (regErr) {
+					console.error('注册失败', regErr);
+					showMessage('loginMessage', '注册失败，用户名可能已被占用', 'error');
+				}
+			} else {
+				console.error('登录失败', err);
+				showMessage('loginMessage', '登录失败，请重试', 'error');
 			}
 		}
 }
