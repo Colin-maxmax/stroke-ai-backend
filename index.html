@@ -1255,8 +1255,6 @@
     }
     
     // 登录功能
-// 直接替换 login 函数
-// 登录 / 自动注册一体化函数
 	async function login() {
 		const username = document.getElementById('username').value.trim();
 		const password = document.getElementById('password').value.trim();
@@ -1271,8 +1269,8 @@
 		}
 
 		try {
-			// 先尝试登录已有账号
-			await auth.signInWithUsernameAndPassword(username, password);
+			// 新 API：尝试登录
+			await auth.signIn({ username, password });
 			const user = auth.currentUser;
 			sessionStorage.setItem('currentUser', JSON.stringify({
 				uid: user.uid,
@@ -1282,9 +1280,10 @@
 			setTimeout(() => hideEntryPage(), 1000);
 		} catch (err) {
 			// 登录失败，视为新用户，自动注册
-			if (err.error_code === 4043) {
+			if (err.error_code === 4043 || err.code === 'INVALID_USERNAME_OR_PASSWORD') {
 				try {
-					await auth.signUpWithUsernameAndPassword(username, password);
+					// 新 API：注册
+					await auth.signUp({ username, password });
 					const user = auth.currentUser;
 					await db.collection('users').doc(user.uid).set({
 						username: username,
@@ -1305,7 +1304,7 @@
 				showMessage('loginMessage', '登录失败，请重试', 'error');
 			}
 		}
-}
+	}
     
 // 把 verifyCodeAndComplete 整个替换成这个
 	async function verifyCodeAndComplete() {
