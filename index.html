@@ -1905,7 +1905,7 @@ async function handleAssessmentSubmit(e) {
   }
   probability = Math.min(probability, 0.9834);
   const probabilityPercent = (probability * 100).toFixed(1);
-
+	const currentUser = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
   // ========== 4. 创建评估对象（保存所有字段） ==========
   const assessment = {
   userId: user.uid,
@@ -1943,7 +1943,6 @@ async function handleAssessmentSubmit(e) {
     probability: probabilityPercent,
     notes: '',
     date: new Date().toISOString(),
-    const currentUser = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
 	assessedBy: currentUser.username || '未知用户',
     modelInfo: {
       accuracy: "98.07%",
