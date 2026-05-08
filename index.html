@@ -2081,7 +2081,7 @@ function stopSpeaking() {
 		// 从 CloudBase 查询指定评估记录
 		const docRef = db.collection('assessments').doc(assessmentId);
 		const doc = await docRef.get();
-		if (!doc.data || doc.data.length === 0) {   // 正确判断
+		if (!doc.data) {   // 正确判断
 		  showAlert('未找到该评估记录', 'error');
 		  return;
 		}
