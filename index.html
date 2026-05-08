@@ -2085,7 +2085,7 @@ function stopSpeaking() {
 		  showAlert('未找到该评估记录', 'error');
 		  return;
 		}
-		const assessment = { id: doc.id, ...doc.data[0] };
+		const assessment = { id: doc.id, ...doc.data };
 		const assessmentDate = new Date(assessment.date).toLocaleString('zh-CN');
 		const riskColor = getRiskColor(assessment.riskLevel);
 	  
@@ -2292,11 +2292,11 @@ async function printAssessment(assessmentId) {
   if (!user) return;
   try {
 	const doc = await db.collection('assessments').doc(assessmentId).get();
-	if (!doc.data || doc.data.length === 0) {   // 改用 doc.data 来判断
+	if (!doc.data ) {   // 改用 doc.data 来判断
 	  showAlert('未找到该评估记录', 'error');
 	  return;
 	}
-	const assessment = { id: doc.id, ...doc.data[0] };  // 注意 doc.data 是数组
+	const assessment = { id: doc.id, ...doc.data };  // 注意 doc.data 是数组
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`
     <html>
