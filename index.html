@@ -1298,30 +1298,36 @@
 	async function verifyCodeAndComplete() {
 		const code = document.getElementById('verificationCode').value.trim();
 		const username = document.getElementById('regUsername').value.trim(); // 用户想设的用户名
-		
+
 		if (!code) {
 			showMessage('registerMessage', '请输入验证码', 'error');
 			return;
 		}
 
 		try {
-			// 1. 用短信验证码登录（也是注册）
-			await auth.signInWithPhoneCode({
-				phone_number: pendingRegistrationPhone,  // 改为正确的变量名
-				verification_id: pendingVerificationId,
-				verification_code: code
+			// 1. 用短信验证码登录（正确的方法名是 signInWithPhone，不是 signInWithPhoneCode）
+			await auth.signInWithPhone({
+				phone: pendingRegistrationPhone,          // 注意字段名是 phone，不是 phone_number
+				verification_code: code,                  // 下划线
+				verification_id: pendingVerificationId    // 下划线
 			});
 
 			const user = auth.currentUser;
 
-			// 2. 关键一步：绑定用户名和密码
-			// 绑定成功后，以后就能用这个用户名和密码跨设备登录了
-			await user.link({
-				username: username,
-				password: document.getElementById('regPassword').value // 用注册表单里的密码
-			});
+			// 2. 绑定用户名和密码（用于跨设备登录）
+			try {
+				// 创建一个用户名密码凭证
+				const credential = auth.UsernameAndPasswordCredential(
+					username,
+					document.getElementById('regPassword').value
+				);
+				// 关联到当前手机号用户
+				await user.linkWithCredential(credential);
+			} catch (linkErr) {
+				console.warn('绑定用户名密码失败，但不影响注册', linkErr);
+			}
 
-			// 3. 保存资料
+			// 3. 保存用户资料
 			await db.collection('users').doc(user.uid).set({
 				username: username,
 				phone: pendingRegistrationPhone,
@@ -1337,7 +1343,9 @@
 			setTimeout(() => hideEntryPage(), 1000);
 		} catch (err) {
 			console.error(err);
-			showMessage('registerMessage', '验证失败，请检查', 'error');
+			let msg = '验证失败，请检查验证码是否正确';
+			if (err.message && err.message.includes('code')) msg = '验证码错误或已过期';
+			showMessage('registerMessage', msg, 'error');
 		}
 	}
 		
