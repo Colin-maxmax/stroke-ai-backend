@@ -1,0 +1,18 @@
+{
+  "name": "stroke-cloudbase-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "脑卒中平台 CloudBase 云函数：账号、评估数据与小程序同步",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.0.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

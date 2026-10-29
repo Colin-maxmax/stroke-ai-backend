@@ -734,8 +734,7 @@
       </div>
       
       <div class="login-tips">
-        测试账号：admin / admin123<br>
-        或自行注册新账号
+        账号由管理员分配，也可自行注册；数据会同步到云端
       </div>
     </div>
   </div>
@@ -749,6 +748,7 @@
         </div>
         <div class="user-info">
           <span id="userFullName"></span>
+          <button id="logoutBtn" class="btn btn-sm btn-secondary" style="margin-left: 10px;">退出登录</button>
           <div class="date-time" id="currentDateTime"></div>
         </div>
       </header>
@@ -1128,74 +1128,127 @@
 	  </div>
 	</div>
 
-  <script>
-    // 用户数据库（使用 localStorage 存储）
-    const USER_DB_KEY = 'stroke_users';
+    <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+<script>
+        // ==================== 云端数据缓存 ====================
+    // 账号与评估数据存放在 CloudBase，本机只缓存当前会话拉取到的数据
     const ASSESSMENTS_DB_KEY = 'stroke_assessments';
-	const CHAT_DB_KEY = 'stroke_chat_messages';
+    const CHAT_DB_KEY = 'stroke_chat_messages';
     let currentUtterance = null;
-	let isSpeaking = false;
-	let currentSentenceIndex = 0;
-	let sentenceQueue = [];
-	
-    // 初始化用户数据库
-    function initUserDatabase() {
-      if (!localStorage.getItem(USER_DB_KEY)) {
-        // 默认测试账号
-        const defaultUsers = [
-          { username: 'admin', password: 'admin123' },
-          { username: 'user1', password: '123456' },
-          { username: 'test', password: 'test123' }
-        ];
-        localStorage.setItem(USER_DB_KEY, JSON.stringify(defaultUsers));
+    let isSpeaking = false;
+    let currentSentenceIndex = 0;
+    let sentenceQueue = [];
+
+    let assessmentCache = [];
+    let lastServerTime = null;
+    let syncInFlight = false;
+    let pollTimer = null;
+    let fullSyncTimer = null;
+    let visibilityHandler = null;
+    let currentUser = null;
+    let modalInitialized = false;
+    let eventsInitialized = false;
+
+    const API = window.StrokeAPI;
+    const CONFIG = window.STROKE_CONFIG || {};
+
+    // 保持原有同步调用方式：直接返回缓存数组
+    function getAllAssessments() {
+      return assessmentCache;
+    }
+
+    function getCurrentUser() {
+      if (currentUser) return currentUser;
+      try {
+        currentUser = JSON.parse(sessionStorage.getItem('currentUser') || 'null');
+      } catch (err) {
+        currentUser = null;
+      }
+      return currentUser;
+    }
+
+    function setCurrentUser(user) {
+      currentUser = user || null;
+      if (user) {
+        sessionStorage.setItem('currentUser', JSON.stringify({
+          ...user,
+          loginTime: new Date().toISOString()
+        }));
+      } else {
+        sessionStorage.removeItem('currentUser');
       }
     }
-    
-    // 获取所有用户
-    function getAllUsers() {
-      const usersStr = localStorage.getItem(USER_DB_KEY);
-      return usersStr ? JSON.parse(usersStr) : [];
+
+    function showEntryPage(message) {
+      stopRealtimeSync();
+      assessmentCache = [];
+      lastServerTime = null;
+      setCurrentUser(null);
+      currentUser = null;
+
+      const entry = document.getElementById('entryPage');
+      const main = document.getElementById('mainContent');
+      if (main) main.style.display = 'none';
+      if (entry) {
+        entry.style.display = 'flex';
+        entry.style.opacity = '1';
+        document.body.style.overflow = 'hidden';
+        showLoginForm();
+        if (message) showMessage('loginMessage', message, 'error');
+      }
+      const loginBtn = document.getElementById('loginBtn');
+      if (loginBtn) {
+        loginBtn.disabled = false;
+        loginBtn.textContent = '登录';
+      }
+      const registerBtn = document.getElementById('registerBtn');
+      if (registerBtn) {
+        registerBtn.disabled = false;
+        registerBtn.textContent = '注册';
+      }
+      const assessmentModal = document.getElementById('assessmentModal');
+      if (assessmentModal) assessmentModal.style.display = 'none';
+      document.title = '脑卒中预测高危风险平台';
     }
-    
-    // 保存用户
-    function saveUsers(users) {
-      localStorage.setItem(USER_DB_KEY, JSON.stringify(users));
+
+    function logout() {
+      if (API) API.clearSession();
+      showEntryPage('已退出登录');
     }
-    
-    // 查找用户
-    function findUser(username) {
-      const users = getAllUsers();
-      return users.find(user => user.username === username);
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
-    
-    // 添加新用户
-    function addUser(username, password) {
-      const users = getAllUsers();
-      users.push({ username, password });
-      saveUsers(users);
+
+    // 服务端返回的字符串字段统一转义后再拼进 innerHTML
+    function sanitizeAssessmentForRender(assessment) {
+      const copy = { ...assessment };
+      const stringFields = [
+        'patientName', 'gender', 'everMarried', 'workType', 'residenceType',
+        'avgGlucoseLevel', 'smokingStatus', 'drinkingStatus', 'exerciseFrequency',
+        'education', 'monthlyIncome', 'strokeFamilyHistory', 'assessedBy',
+        'ownerName', 'notes'
+      ];
+      stringFields.forEach((field) => {
+        if (copy[field] != null) copy[field] = escapeHtml(copy[field]);
+      });
+      copy.riskFactors = Array.isArray(assessment.riskFactors)
+        ? assessment.riskFactors.map(escapeHtml)
+        : [];
+      if (copy.modelInfo && typeof copy.modelInfo === 'object') {
+        copy.modelInfo = { ...copy.modelInfo };
+        ['dataSource', 'accuracy', 'algorithm'].forEach((field) => {
+          if (copy.modelInfo[field] != null) copy.modelInfo[field] = escapeHtml(copy.modelInfo[field]);
+        });
+      }
+      return copy;
     }
-    
-    // 获取所有评估记录
-    function getAllAssessments() {
-	  const userData = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
-	  const username = userData.username;
-	  if (!username) return [];
-	  
-	  const userKey = `${ASSESSMENTS_DB_KEY}_${username}`;
-	  const assessmentsStr = localStorage.getItem(userKey);
-	  return assessmentsStr ? JSON.parse(assessmentsStr) : [];
-    }
-    
-    // 保存评估记录
-    function saveAssessments(assessments) {
-		const userData = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
-		const username = userData.username;
-		if (!username) return;
-  
-		const userKey = `${ASSESSMENTS_DB_KEY}_${username}`;
-		localStorage.setItem(userKey, JSON.stringify(assessments));
-    }
-    
     // 显示消息
     function showMessage(elementId, message, type = 'error') {
       const messageEl = document.getElementById(elementId);
@@ -1243,85 +1296,80 @@
     }
     
     // 登录功能
-    function login() {
-	  const username = document.getElementById('username').value.trim();
-	  const password = document.getElementById('password').value.trim();
+    async function login() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value.trim();
 
-	  if (!username) {
-		showMessage('loginMessage', '请输入账号', 'error');
-		return;
-	  }
-	  if (!password) {
-		showMessage('loginMessage', '请输入密码', 'error');
-		return;
-	  }
+      if (!username) {
+        showMessage('loginMessage', '请输入账号', 'error');
+        return;
+      }
+      if (!password) {
+        showMessage('loginMessage', '请输入密码', 'error');
+        return;
+      }
 
-	  const user = findUser(username);
-	  if (!user) {
-		showMessage('loginMessage', '账号不存在，请先注册', 'error');
-		return;
-	  }
-	  if (user.password !== password) {
-		showMessage('loginMessage', '密码错误，请重试', 'error');
-		return;
-	  }
+      const loginBtn = document.getElementById('loginBtn');
+      loginBtn.disabled = true;
+      loginBtn.textContent = '登录中...';
 
-	  showMessage('loginMessage', '登录成功，正在进入系统...', 'success');
-	  sessionStorage.setItem('currentUser', JSON.stringify({
-		username: user.username,
-		loginTime: new Date().toISOString()
-	  }));
+      try {
+        const result = await API.login({ username, password });
+        API.setToken(result.token);
+        setCurrentUser(result.user);
+        showMessage('loginMessage', '登录成功，正在进入系统...', 'success');
+        setTimeout(() => {
+          hideEntryPage();
+        }, 400);
+      } catch (err) {
+        showMessage('loginMessage', err.message || '登录失败，请稍后重试', 'error');
+        loginBtn.disabled = false;
+        loginBtn.textContent = '登录';
+      }
+    }
 
-	  const loginBtn = document.getElementById('loginBtn');
-	  loginBtn.disabled = true;
-	  loginBtn.textContent = '登录中...';
-
-	  setTimeout(() => {
-		hideEntryPage();
-	  }, 2000);
-	}
-    
     // 注册功能
-	function register() {
-	  const username = document.getElementById('regUsername').value.trim();
-	  const password = document.getElementById('regPassword').value.trim();
-	  const confirmPassword = document.getElementById('confirmPassword').value.trim();
+    async function register() {
+      const username = document.getElementById('regUsername').value.trim();
+      const password = document.getElementById('regPassword').value.trim();
+      const confirmPassword = document.getElementById('confirmPassword').value.trim();
 
-	  if (!username) {
-		showMessage('registerMessage', '请输入账号', 'error');
-		return;
-	  }
-	  if (!password) {
-		showMessage('registerMessage', '请输入密码', 'error');
-		return;
-	  }
-	  if (!confirmPassword) {
-		showMessage('registerMessage', '请确认密码', 'error');
-		return;
-	  }
-	  if (password !== confirmPassword) {
-		showMessage('registerMessage', '两次输入的密码不一致', 'error');
-		return;
-	  }
-	  if (findUser(username)) {
-		showMessage('registerMessage', '该账号已存在，请使用其他账号', 'error');
-		return;
-	  }
+      if (!username) {
+        showMessage('registerMessage', '请输入账号', 'error');
+        return;
+      }
+      if (!password) {
+        showMessage('registerMessage', '请输入密码', 'error');
+        return;
+      }
+      if (!confirmPassword) {
+        showMessage('registerMessage', '请确认密码', 'error');
+        return;
+      }
+      if (password !== confirmPassword) {
+        showMessage('registerMessage', '两次输入的密码不一致', 'error');
+        return;
+      }
 
-	  addUser(username, password);
-	  showMessage('registerMessage', '注册成功！请返回登录', 'success');
+      const registerBtn = document.getElementById('registerBtn');
+      registerBtn.disabled = true;
+      registerBtn.textContent = '注册中...';
 
-	  const registerBtn = document.getElementById('registerBtn');
-	  registerBtn.disabled = true;
-	  registerBtn.textContent = '注册成功';
-
-	  setTimeout(() => {
-		showLoginForm();
-		registerBtn.disabled = false;
-		registerBtn.textContent = '注册';
-	  }, 3000);
-	}
-    
+      try {
+        const result = await API.register({ username, password });
+        API.setToken(result.token);
+        setCurrentUser(result.user);
+        showMessage('registerMessage', '注册成功，正在进入系统...', 'success');
+        registerBtn.textContent = '注册成功';
+        setTimeout(() => {
+          hideEntryPage();
+        }, 600);
+      } catch (err) {
+        showMessage('registerMessage', err.message || '注册失败，请稍后重试', 'error');
+        registerBtn.disabled = false;
+        registerBtn.textContent = '注册';
+      }
+    }
     // 入口页面功能
     function hideEntryPage() {
       const entryPage = document.getElementById('entryPage');
@@ -1342,34 +1390,31 @@
           // 更新页面标题为包含用户名
           const userData = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
           if (userData.username) {
+            const roleLabel = userData.role === 'admin' ? '（管理员）' : '';
             document.title = `脑卒中预测平台 - ${userData.username}`;
-            document.getElementById('userFullName').textContent = userData.username;
+            document.getElementById('userFullName').textContent = userData.username + roleLabel;
           }
           
-          // 初始化主页面
           initMainPage();
-          
           console.log('用户已登录并进入脑卒中预测平台');
         }, 500);
       }
     }
-    
+
     // 初始化主页面
     function initMainPage() {
-      // 更新时间显示
       updateDateTime();
-      setInterval(updateDateTime, 1000);
-      
-      // 加载评估记录
-      loadAssessments();
-      
-      // 初始化模态框
+      if (!window._strokeDateTimeTimer) {
+        window._strokeDateTimeTimer = setInterval(updateDateTime, 1000);
+      }
+
       initModal();
-      
-      // 初始化事件监听
       initEventListeners();
+
+      startRealtimeSync();
+      maybeMigrateLocalData();
     }
-    
+
     // 更新时间显示
     function updateDateTime() {
       const now = new Date();
@@ -1384,25 +1429,88 @@
       });
       document.getElementById('currentDateTime').textContent = dateTimeStr;
     }
-    
-    // 加载评估记录
-    function loadAssessments() {
-      const assessments = getAllAssessments();
-      const filterValue = document.getElementById('riskFilter').value;
-      
-      // 筛选评估记录
-      let filteredAssessments = assessments;
-      if (filterValue !== '全部') {
-        filteredAssessments = assessments.filter(assessment => assessment.riskLevel === filterValue);
-      }
-      
-      // 渲染评估记录
-      renderAssessments(filteredAssessments);
-      
-      // 更新统计信息
+
+      // 根据缓存 + 当前筛选渲染列表与统计
+    function renderCurrentList() {
+      const filterEl = document.getElementById('riskFilter');
+      const filterValue = filterEl ? filterEl.value : '全部';
+      const assessments = assessmentCache;
+      const filtered = filterValue === '全部'
+        ? assessments
+        : assessments.filter((item) => item.riskLevel === filterValue);
+      renderAssessments(filtered);
       updateStats(assessments);
     }
-    
+
+    // 从云端加载评估记录；full=true 时全量覆盖本地缓存
+    async function loadAssessments(options = {}) {
+      const { full = false, silent = false } = options;
+      if (syncInFlight) return;
+      if (!API || !API.getToken()) return;
+
+      syncInFlight = true;
+      const firstLoad = !lastServerTime;
+      const signature = (list) => JSON.stringify((list || []).map((item) => [
+        item.id, item.riskLevel, item.probability, item.date
+      ]));
+      let changed = false;
+      try {
+        const payload = (full || firstLoad)
+          ? { limit: 500 }
+          : { since: lastServerTime, limit: 500 };
+        const data = await API.listAssessments(payload);
+
+        if (full || firstLoad) {
+          const next = data.items || [];
+          changed = firstLoad || signature(next) !== signature(assessmentCache);
+          assessmentCache = next;
+        } else {
+          const seen = new Set(assessmentCache.map((item) => item.id));
+          const incoming = (data.items || []).filter((item) => !seen.has(item.id));
+          if (incoming.length > 0) {
+            assessmentCache = incoming.concat(assessmentCache)
+              .sort((a, b) => new Date(b.date) - new Date(a.date));
+            changed = true;
+            if (!silent) showAlert(`收到 ${incoming.length} 条新评估`, 'success');
+          }
+        }
+        lastServerTime = data.serverTime || lastServerTime;
+        if (changed) renderCurrentList();
+      } catch (err) {
+        if (err && (err.code === 'UNAUTHORIZED' || err.code === 'TOKEN_EXPIRED')) return;
+        if (!silent) showAlert(`加载评估记录失败：${err.message || '网络异常'}`, 'error');
+      } finally {
+        syncInFlight = false;
+      }
+    }
+
+    // 5 秒增量同步 + 每 60 秒全量校准（处理其他设备删除）
+    function startRealtimeSync() {
+      stopRealtimeSync();
+      loadAssessments({ full: true, silent: true });
+      pollTimer = setInterval(() => {
+        if (!document.hidden) loadAssessments({ silent: false });
+      }, CONFIG.POLL_INTERVAL_MS || 5000);
+      fullSyncTimer = setInterval(() => {
+        if (!document.hidden) loadAssessments({ full: true, silent: true });
+      }, CONFIG.FULL_SYNC_INTERVAL_MS || 60000);
+      visibilityHandler = () => {
+        if (!document.hidden) loadAssessments({ full: true, silent: true });
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
+    }
+
+    function stopRealtimeSync() {
+      if (pollTimer) clearInterval(pollTimer);
+      if (fullSyncTimer) clearInterval(fullSyncTimer);
+      pollTimer = null;
+      fullSyncTimer = null;
+      if (visibilityHandler) {
+        document.removeEventListener('visibilitychange', visibilityHandler);
+        visibilityHandler = null;
+      }
+    }
+
 		// 渲染评估记录
 function renderAssessments(assessments) {
   const container = document.getElementById('assessmentsContainer');
@@ -1422,12 +1530,13 @@ function renderAssessments(assessments) {
   }
   
   // 渲染每条评估记录
-  assessments.forEach(assessment => {
+  assessments.forEach((assessment) => {
+    assessment = sanitizeAssessmentForRender(assessment);
     const riskColor = getRiskColor(assessment.riskLevel);
     const assessmentDate = new Date(assessment.date).toLocaleDateString('zh-CN');
     
     // 根据策划书特征重要性排序风险因素
-    const sortedRiskFactors = assessment.riskFactors.sort((a, b) => {
+    const sortedRiskFactors = [...(assessment.riskFactors || [])].sort((a, b) => {
 		// 定义重要性排序（根据策划书图15）
 		const importanceOrder = {
 			// 第一梯队：随机森林最高重要性（>0.3）
@@ -1439,9 +1548,14 @@ function renderAssessments(assessments) {
 			'心脏病史': 2,
 			'糖尿病史': 2,
 			'高血脂病史': 2,
+			'房颤或心梗史': 2,
+			'其他心脏病': 2,
+			'高血脂': 2,
 			
 			// 第三梯队：随机森林中等+医学重要（0.05-0.15）
 			'脑卒中家族史': 3,
+			'脑卒中家族史（一级亲属）': 3,
+			'脑卒中家族史（二级亲属）': 3,
 			'重度高血压': 3,
 			'中度高血压': 3,
 			'肥胖（BMI≥28）': 3,
@@ -1451,15 +1565,20 @@ function renderAssessments(assessments) {
 			'目前吸烟': 4,
 			'经常饮酒': 4,
 			'运动缺乏': 4,
+			'高尿酸血症': 4,
 			
 			// 第五梯队：其他因素
 			'轻度高血压': 5,
+			'职业风险（政府工作）': 5,
+			'职业风险（从未工作）': 5,
 			'以前吸烟': 5,
 			'不健康膳食': 5,
 			'体重偏瘦': 5,
 			'糖尿病前期': 6,
 			'严重高血糖': 6,
 			'低血糖': 6,
+			'贫血': 6,
+			'心理疾病': 7,
 			'高血压合并吸烟': 7,
 			'中年高血压': 7
 		};
@@ -1512,6 +1631,11 @@ function renderAssessments(assessments) {
             ${sortedRiskFactors.slice(0, 3).join('、')}${sortedRiskFactors.length > 3 ? '等' + sortedRiskFactors.length + '项' : ''}
           </span>
         </div>
+        <div class="item-detail">
+          <span class="item-label">来源/提交者:</span>
+          <span class="item-value">${assessment.source === 'miniprogram' ? '小程序' : '网站'} · ${assessment.ownerName || assessment.assessedBy || ''}</span>
+        </div>
+
         ${assessment.modelInfo ? `
         <div class="item-detail">
           <span class="item-label">模型信息:</span>
@@ -1604,6 +1728,8 @@ function renderAssessments(assessments) {
     
     // 初始化模态框
 function initModal() {
+  if (modalInitialized) return;
+  modalInitialized = true;
   const modal = document.getElementById('assessmentModal');
   const closeBtn = modal.querySelector('.close');
   const cancelBtn = document.getElementById('cancelBtn');
@@ -1716,287 +1842,111 @@ document.getElementById('workType').addEventListener('change', checkExerciseRisk
 document.getElementById('exerciseFrequency').addEventListener('change', checkExerciseRisk);
 	
 
-// 处理评估提交（基于18项特征随机森林模型）
-function handleAssessmentSubmit(e) {
+// 处理评估提交（服务端统一评分）
+async function handleAssessmentSubmit(e) {
   e.preventDefault();
-  
-  // ========== 收集所有表单数据（18项特征）==========
-  const patientName = document.getElementById('patientName').value.trim();
-  const age = parseInt(document.getElementById('patientAge').value);
-  const gender = document.getElementById('patientGender').value;
-  const everMarried = document.getElementById('everMarried').value;   // 保留但不参与评分
-  const workType = document.getElementById('workType').value;
-  const residenceType = document.getElementById('residenceType').value;
-  const hypertension = document.getElementById('hypertension').value === '1';
 
-  // 新增字段
-  const education = document.getElementById('education').value;
-  const monthlyIncome = document.getElementById('monthlyIncome').value;
-  const heartDiseaseType = document.getElementById('heartDiseaseType').value; // "0","1","2"
-  const hyperuricemia = document.getElementById('hyperuricemia').checked;
-  const anemia = document.getElementById('anemia').checked;
-  const mentalIllness = document.getElementById('mentalIllness').checked;
+  const submitBtn = document.getElementById('submitBtn');
+  if (submitBtn.disabled) return;
 
-  // 临床指标
-  const systolicBP = parseInt(document.getElementById('systolicBP').value);
-  const diastolicBP = parseInt(document.getElementById('diastolicBP').value);
-  const avgGlucoseLevel = parseFloat(document.getElementById('avgGlucoseLevel').value);
-  const height = document.getElementById('patientHeight').value ? parseFloat(document.getElementById('patientHeight').value) : null;
-  const weight = document.getElementById('patientWeight').value ? parseFloat(document.getElementById('patientWeight').value) : null;
-
-  // 生活习惯
-  const smokingStatus = document.getElementById('smokingStatus').value;
-  const exerciseFrequency = document.getElementById('exerciseFrequency').value;
-  const drinkingStatus = document.getElementById('drinkingStatus').value;
-
-  // 中风相关病史
-  const strokeHistory = document.getElementById('strokeHistory').value === '1';
-  const tiaHistory = document.getElementById('tiaHistory').value === '1';
-  const strokeFamilyHistory = document.getElementById('strokeFamilyHistory').value;
-  const hyperlipidemia = document.getElementById('hyperlipidemia').value === '1';
-
-  // 膳食习惯
-  const selectedDietaryHabits = [];
-  document.querySelectorAll('input[name="dietaryHabit"]:checked').forEach(checkbox => {
-    selectedDietaryHabits.push(checkbox.value);
-  });
-  const hasUnhealthyDiet = selectedDietaryHabits.some(habit => 
-    ['高盐', '高油', '高糖', '蔬菜不足', '水果不足'].includes(habit)
-  );
-
-  // BMI 计算
-  let bmi = null;
-  if (height && weight && height > 0 && weight > 0) {
-    const heightInMeters = height / 100;
-    bmi = weight / (heightInMeters * heightInMeters);
-    bmi = Math.round(bmi * 10) / 10;
-  }
-
-  // 为兼容旧记录，生成一个 legacy heartDisease 字段
-  const heartDiseaseLegacy = heartDiseaseType !== '0';
-
-  // ========== 风险权重计算（基于随机森林18项特征重要性）==========
-  let riskScore = 0;
-  let riskFactors = [];
-
-  // 1. 中风/短暂性脑缺血病史（最重要 38分）
-  const hasStrokeOrTIA = strokeHistory || tiaHistory;
-  if (hasStrokeOrTIA) {
-    riskScore += 38;
-    if (strokeHistory) riskFactors.push('中风病史');
-    if (tiaHistory) riskFactors.push('短暂性脑缺血病史');
-  }
-
-  // 2. 糖尿病史（血糖≥7.0，28分）
-  const hasDiabetes = avgGlucoseLevel >= 7.0;
-  if (hasDiabetes) {
-    riskScore += 28;
-    riskFactors.push('糖尿病史');
-  }
-
-  // 3. 职业（政府工作/从未工作，16分）
-  if (workType === '政府工作' || workType === '从未工作') {
-    riskScore += 16;
-    riskFactors.push(`职业风险（${workType}）`);
-  }
-
-  // 4. 高血压病史（22分）
-  if (hypertension) {
-    riskScore += 22;
-    riskFactors.push('高血压病史');
-  }
-
-  // 5. 年龄分层（最高15分）
-  if (age >= 75) riskScore += 15;
-  else if (age >= 65) riskScore += 12;
-  else if (age >= 55) riskScore += 9;
-  else if (age >= 45) riskScore += 6;
-  else if (age >= 35) riskScore += 3;
-
-  // 6. 家庭人均月收入（低风险 12分）
-  if (monthlyIncome === '<2000') riskScore += 12;
-  else if (monthlyIncome === '2000-5000') riskScore += 7;
-
-  // 7. 学历（小学及以下 10分）
-  if (education === '小学及以下') riskScore += 10;
-  else if (education === '初中') riskScore += 6;
-
-  // 8. 房颤/心梗/其他心脏病（房颤14分，其他6分）
-  if (heartDiseaseType === '1') {
-    riskScore += 14;
-    riskFactors.push('房颤或心梗史');
-  } else if (heartDiseaseType === '2') {
-    riskScore += 6;
-    riskFactors.push('其他心脏病');
-  }
-
-  // 9. 运动缺乏（10分）
-  const lackOfExercise = exerciseFrequency === '无运动' || 
-                         (age > 50 && exerciseFrequency === '少量运动');
-  if (lackOfExercise) {
-    riskScore += 10;
-    riskFactors.push('运动缺乏');
-  }
-
-  // 10. 高血脂（9分）
-  if (hyperlipidemia) {
-    riskScore += 9;
-    riskFactors.push('高血脂');
-  }
-
-  // 11. 吸烟（目前吸烟8分，以前吸烟4分）
-  if (smokingStatus === '目前吸烟') {
-    riskScore += 8;
-    riskFactors.push('目前吸烟');
-  } else if (smokingStatus === '以前吸烟') {
-    riskScore += 4;
-    riskFactors.push('以前吸烟');
-  }
-
-  // 12. 脑卒中家族史（7分）
-  if (strokeFamilyHistory !== '0') {
-    riskScore += 7;
-    const familyLevel = strokeFamilyHistory === '1' ? '一级亲属' : '二级亲属';
-    riskFactors.push(`脑卒中家族史（${familyLevel}）`);
-  }
-
-  // 13. 超重/肥胖 BMI（肥胖7分，超重5分）
-  if (bmi) {
-    if (bmi >= 28) {
-      riskScore += 7;
-      riskFactors.push('肥胖（BMI≥28）');
-    } else if (bmi >= 24) {
-      riskScore += 5;
-      riskFactors.push('超重（BMI 24-27.9）');
-    }
-  }
-
-  // 14. 居住地农村（4分）
-  if (residenceType === '农村') riskScore += 4;
-
-  // 15. 高尿酸血症（4分）
-  if (hyperuricemia) {
-    riskScore += 4;
-    riskFactors.push('高尿酸血症');
-  }
-
-  // 16. 贫血（3分）
-  if (anemia) {
-    riskScore += 3;
-    riskFactors.push('贫血');
-  }
-
-  // 17. 心理疾病（3分）
-  if (mentalIllness) {
-    riskScore += 3;
-    riskFactors.push('心理疾病');
-  }
-
-  // 18. 血压/血糖附加修正（额外加分，不占主要权重）
-  if (systolicBP >= 180 || diastolicBP >= 110) riskScore += 5;
-  else if (systolicBP >= 160 || diastolicBP >= 100) riskScore += 3;
-  if (avgGlucoseLevel >= 6.1 && avgGlucoseLevel < 7.0) riskScore += 3;  // 糖尿病前期
-  if (avgGlucoseLevel >= 11.1) riskScore += 4;  // 严重高血糖
-
-  // 截断总分最高100
-  let normalizedScore = Math.min(riskScore, 100);
-
-  // ========== 风险等级判定（阈值微调，匹配模型性能）==========
-  let riskLevel, probability;
-  if (normalizedScore >= 60) {
-    riskLevel = '高风险';
-    probability = 0.5 + (normalizedScore - 60) * 0.012;
-  } else if (normalizedScore >= 40) {
-    riskLevel = '中风险';
-    probability = 0.15 + (normalizedScore - 40) * 0.012;
-  } else {
-    riskLevel = '低风险';
-    probability = 0.02 + (normalizedScore / 200);
-  }
-  probability = Math.min(probability, 0.9834);
-  const probabilityPercent = (probability * 100).toFixed(1);
-
-  // ========== 创建评估对象 ==========
-  const assessment = {
-    id: Date.now().toString(),
-    patientName,
-    age,
-    gender,
-    everMarried,
-    workType,
-    residenceType,
-    hypertension,
-    heartDisease: heartDiseaseLegacy,        // 兼容旧数据
-    heartDiseaseType: heartDiseaseType,      // 新增字段保存
-    strokeHistory,
-    tiaHistory,
-    strokeFamilyHistory,
-    hyperlipidemia,
-    systolicBP,
-    diastolicBP,
-    avgGlucoseLevel: avgGlucoseLevel.toFixed(1) + ' mmol/L',
-    height,
-    weight,
-    bmi,
-    smokingStatus,
-    drinkingStatus,
-    exerciseFrequency,
-    dietaryHabits: selectedDietaryHabits,
-    education,           // 保存学历
-    monthlyIncome,       // 保存收入
-    hyperuricemia,
-    anemia,
-    mentalIllness,
-    riskFactors,
-    riskScore: Math.round(riskScore * 10) / 10,
-    riskLevel,
-    probability: probabilityPercent,
-    notes: '',
-    date: new Date().toISOString(),
-    assessedBy: JSON.parse(sessionStorage.getItem('currentUser')).username,
-    modelInfo: {
-      accuracy: "98.07%",
-      precision: "98.44%",
-      recall: "90.00%",
-      f1: "94.03%",
-      dataSource: "粤北五市1300+样本 (18项特征)",
-      algorithm: "随机森林"
-    }
+  const value = (id) => {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+  };
+  const checked = (id) => {
+    const el = document.getElementById(id);
+    return !!(el && el.checked);
   };
 
-  // 保存评估记录
-  const allAssessments = getAllAssessments();
-  allAssessments.unshift(assessment);
-  saveAssessments(allAssessments);
+  const selectedDietaryHabits = [];
+  document.querySelectorAll('input[name="dietaryHabit"]:checked').forEach((checkbox) => {
+    selectedDietaryHabits.push(checkbox.value);
+  });
 
-  // 关闭模态框
-  document.getElementById('assessmentModal').style.display = 'none';
-  document.getElementById('assessmentForm').reset();
-  document.getElementById('bmiDisplayContainer').style.display = 'none';
+  const heightValue = value('patientHeight');
+  const weightValue = value('patientWeight');
 
-  // 显示详细结果
-  showAlert(`风险评估完成！风险等级：${riskLevel}，患病概率：${probabilityPercent}%`, 'success');
+  const data = {
+    patientName: value('patientName').trim(),
+    age: parseInt(value('patientAge'), 10),
+    gender: value('patientGender'),
+    everMarried: value('everMarried'),
+    workType: value('workType'),
+    residenceType: value('residenceType'),
+    hypertension: value('hypertension') === '1',
+    education: value('education'),
+    monthlyIncome: value('monthlyIncome'),
+    heartDiseaseType: value('heartDiseaseType'),
+    hyperuricemia: checked('hyperuricemia'),
+    anemia: checked('anemia'),
+    mentalIllness: checked('mentalIllness'),
+    systolicBP: parseInt(value('systolicBP'), 10),
+    diastolicBP: parseInt(value('diastolicBP'), 10),
+    avgGlucoseLevel: parseFloat(value('avgGlucoseLevel')),
+    height: heightValue ? parseFloat(heightValue) : '',
+    weight: weightValue ? parseFloat(weightValue) : '',
+    smokingStatus: value('smokingStatus'),
+    exerciseFrequency: value('exerciseFrequency'),
+    drinkingStatus: value('drinkingStatus'),
+    strokeHistory: value('strokeHistory') === '1',
+    tiaHistory: value('tiaHistory') === '1',
+    strokeFamilyHistory: value('strokeFamilyHistory'),
+    hyperlipidemia: value('hyperlipidemia') === '1',
+    dietaryHabits: selectedDietaryHabits,
+    notes: ''
+  };
 
-  // 如果高风险，显示额外警告
-  if (riskLevel === '高风险') {
-    setTimeout(() => {
-      const highRiskFactors = riskFactors.filter(f => 
-        ['中风病史', '短暂性脑缺血病史', '高血压病史', '心脏病史', '糖尿病史', '重度高血压', '高血脂病史', '脑卒中家族史'].includes(f)
-      );
-      const factorText = highRiskFactors.length > 0 ? 
-        `主要风险因素：${highRiskFactors.slice(0, 5).join('、')}${highRiskFactors.length > 5 ? '等' : ''}` : '';
-      showAlert(
-        `⚠️ ${patientName} 被评估为高风险（概率${probabilityPercent}%），${factorText}建议尽快就医检查！`, 
-        'error'
-      );
-    }, 1000);
+  if (!data.patientName) {
+    showAlert('请填写患者姓名', 'error');
+    return;
   }
 
-  // 重新加载评估记录
-  loadAssessments();
+  submitBtn.disabled = true;
+  const originalText = submitBtn.textContent;
+  submitBtn.textContent = '评估中...';
+
+  try {
+    const assessment = await API.createAssessment({
+      data,
+      clientRequestId: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    });
+
+    if (!assessmentCache.some((item) => item.id === assessment.id)) {
+      assessmentCache.unshift(assessment);
+      assessmentCache.sort((a, b) => new Date(b.date) - new Date(a.date));
+    }
+
+    document.getElementById('assessmentModal').style.display = 'none';
+    document.getElementById('assessmentForm').reset();
+    document.getElementById('bmiDisplayContainer').style.display = 'none';
+    renderCurrentList();
+
+    showAlert(`风险评估完成！风险等级：${assessment.riskLevel}，患病概率：${assessment.probability}%`, 'success');
+
+    if (assessment.riskLevel === '高风险') {
+      setTimeout(() => {
+        const highRiskLabels = [
+          '中风病史', '短暂性脑缺血病史', '高血压病史', '房颤或心梗史',
+          '其他心脏病', '糖尿病史', '高血脂',
+          '脑卒中家族史（一级亲属）', '脑卒中家族史（二级亲属）'
+        ];
+        const highRiskFactors = (assessment.riskFactors || []).filter((factor) => highRiskLabels.includes(factor));
+        const factorText = highRiskFactors.length > 0
+          ? `主要风险因素：${highRiskFactors.slice(0, 5).join('、')}${highRiskFactors.length > 5 ? '等' : ''}`
+          : '';
+        showAlert(
+          `⚠️ ${assessment.patientName} 被评估为高风险（概率${assessment.probability}%），${factorText}建议尽快就医检查！`,
+          'error'
+        );
+      }, 1000);
+    }
+  } catch (err) {
+    showAlert(`评估提交失败：${err.message || '网络异常，请稍后重试'}`, 'error');
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalText;
+  }
 }
-
-
 // 获取可用的中文语音
 function getChineseVoice() {
     const voices = window.speechSynthesis.getVoices();
@@ -2090,12 +2040,14 @@ function stopSpeaking() {
 // 更新查看评估详情的函数
 function viewAssessmentDetails(assessmentId) {
   const assessments = getAllAssessments();
-  const assessment = assessments.find(a => a.id === assessmentId);
+  let assessment = assessments.find(a => a.id === assessmentId);
   
   if (!assessment) {
     showAlert('未找到该评估记录', 'error');
     return;
   }
+
+  assessment = sanitizeAssessmentForRender(assessment);
   
   const assessmentDate = new Date(assessment.date).toLocaleString('zh-CN');
   const riskColor = getRiskColor(assessment.riskLevel);
@@ -2382,9 +2334,10 @@ function getExerciseAdviceForSpeech(age) {
 	// 打印评估建议函数
 function printAssessment(assessmentId) {
   const assessments = getAllAssessments();
-  const assessment = assessments.find(a => a.id === assessmentId);
+  let assessment = assessments.find(a => a.id === assessmentId);
   
   if (!assessment) return;
+  assessment = sanitizeAssessmentForRender(assessment);
   
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`
@@ -2468,37 +2421,41 @@ function printAssessment(assessmentId) {
     
     
     // 删除评估记录
-    function deleteAssessment(assessmentId) {
+    async function deleteAssessment(assessmentId) {
       if (!confirm('确定要删除这条评估记录吗？此操作不可撤销。')) {
         return;
       }
-      
-      const assessments = getAllAssessments();
-      const filteredAssessments = assessments.filter(a => a.id !== assessmentId);
-      
-      if (filteredAssessments.length === assessments.length) {
-        showAlert('删除失败，未找到该评估记录', 'error');
-        return;
+
+      try {
+        await API.deleteAssessment({ id: assessmentId });
+        assessmentCache = assessmentCache.filter((item) => item.id !== assessmentId);
+        renderCurrentList();
+        showAlert('评估记录已删除', 'success');
+      } catch (err) {
+        showAlert(`删除失败：${err.message || '网络异常'}`, 'error');
       }
-      
-      saveAssessments(filteredAssessments);
-      showAlert('评估记录已删除', 'success');
-      loadAssessments();
     }
-    
+
     // 初始化事件监听
     function initEventListeners() {
+      if (eventsInitialized) return;
+      eventsInitialized = true;
+
       // 风险筛选
-      document.getElementById('riskFilter').addEventListener('change', loadAssessments);
+      document.getElementById('riskFilter').addEventListener('change', renderCurrentList);
       
       // 导出数据
       document.getElementById('exportDataBtn').addEventListener('click', exportData);
       
       // 清空数据
       document.getElementById('clearDataBtn').addEventListener('click', clearAllData);
-	  
+
 	  // 交流区按钮
       document.getElementById('chatRoomBtn').addEventListener('click', openChatRoom);
+
+      // 退出登录
+      const logoutBtn = document.getElementById('logoutBtn');
+      if (logoutBtn) logoutBtn.addEventListener('click', logout);
     }
     
 	// 导出数据
@@ -2532,7 +2489,7 @@ const csvData = assessments.map(assessment => [
   assessment.weight || '',
   assessment.bmi || '',
   assessment.smokingStatus,
-  assessment.riskFactors.join(';'),
+  (assessment.riskFactors || []).join(';'),
   assessment.riskScore,
   assessment.riskLevel,
   assessment.probability,
@@ -2541,9 +2498,16 @@ const csvData = assessments.map(assessment => [
   assessment.notes || ''
 ]);
 	  
+	  const csvCell = (cell) => {
+		let text = String(cell == null ? '' : cell);
+		// 防止 Excel 把以 = + - @ 开头的单元格当公式执行
+		if (/^[=+\-@]/.test(text)) text = "'" + text;
+		return `"${text.replace(/"/g, '""')}"`;
+	  };
+
 	  const csvContent = [
 		headers.join(','),
-		...csvData.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+		...csvData.map(row => row.map(csvCell).join(','))
 	  ].join('\n');
 	  
 	  // 创建下载链接
@@ -2558,25 +2522,80 @@ const csvData = assessments.map(assessment => [
 	  showAlert('数据导出成功', 'success');
 	}
     
-    // 清空所有数据
-    function clearAllData() {
-	  if (!confirm('确定要清空所有评估记录吗？此操作不可撤销。')) {
-		return;
-	  }
-	  
-	  if (confirm('再次确认：这将删除您的所有评估记录，确定要继续吗？')) {
-		const userData = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
-		const username = userData.username;
-		if (username) {
-		  const userKey = `${ASSESSMENTS_DB_KEY}_${username}`;
-		  localStorage.removeItem(userKey);
-		}
-		showAlert('所有评估记录已清空', 'success');
-		loadAssessments();
-	  }
+    // 清空评估记录（普通用户只清自己；管理员可选择清全部）
+    async function clearAllData() {
+      if (!confirm('确定要清空评估记录吗？此操作不可撤销。')) {
+        return;
+      }
+      if (!confirm('再次确认：删除后无法恢复，确定要继续吗？')) {
+        return;
+      }
+
+      const user = getCurrentUser() || {};
+      const payload = {};
+      if (user.role === 'admin') {
+        if (confirm('您是管理员：点击“确定”清空全部账号的数据；点击“取消”只清空自己的记录。')) {
+          payload.scope = 'all';
+          payload.confirm = 'CLEAR_ALL';
+        }
+      }
+
+      try {
+        const result = await API.clearAssessments(payload);
+        if (user.username) {
+          localStorage.removeItem(`${ASSESSMENTS_DB_KEY}_${user.username}`);
+        }
+        await loadAssessments({ full: true, silent: true });
+        showAlert(`已清空 ${result.removed || 0} 条评估记录`, 'success');
+      } catch (err) {
+        showAlert(`清空失败：${err.message || '网络异常'}`, 'error');
+      }
     }
-    
-	    // 获取所有聊天消息
+
+    // 首次登录后，把旧版本存在本机 localStorage 的评估记录导入云端
+    async function maybeMigrateLocalData() {
+      const user = getCurrentUser();
+      if (!user || !user.username) return;
+
+      const localKey = `${ASSESSMENTS_DB_KEY}_${user.username}`;
+      const migratedKey = `stroke_migrated_${user.username}`;
+      if (localStorage.getItem(migratedKey) === '1') return;
+
+      let localRecords = [];
+      try {
+        localRecords = JSON.parse(localStorage.getItem(localKey) || '[]');
+      } catch (err) {
+        localRecords = [];
+      }
+      if (!Array.isArray(localRecords) || localRecords.length === 0) return;
+
+      if (!confirm(`检测到本机有 ${localRecords.length} 条历史评估记录，是否导入云端？`)) {
+        return;
+      }
+
+      try {
+        let imported = 0;
+        let skipped = 0;
+        let failed = 0;
+        for (let i = 0; i < localRecords.length; i += 200) {
+          const batch = localRecords.slice(i, i + 200);
+          const result = await API.importAssessments({ records: batch, source: 'web' });
+          imported += result.imported || 0;
+          skipped += result.skipped || 0;
+          failed += result.failed || 0;
+        }
+        localStorage.setItem(migratedKey, '1');
+        showAlert(
+          `历史数据导入完成：新增 ${imported} 条，跳过 ${skipped} 条${failed ? `，失败 ${failed} 条` : ''}`,
+          'success'
+        );
+        await loadAssessments({ full: true, silent: true });
+      } catch (err) {
+        showAlert(`历史数据导入失败：${err.message || '网络异常'}`, 'error');
+      }
+    }
+
+    // 获取所有聊天消息
     function getAllChatMessages() {
       const messagesStr = localStorage.getItem(CHAT_DB_KEY);
       return messagesStr ? JSON.parse(messagesStr) : [];
@@ -2711,33 +2730,36 @@ const csvData = assessments.map(assessment => [
       });
     }
 	
-    // 显示提示消息（用于主页面）
+    // 显示提示消息（用于主页面，文本走 textContent，避免 HTML 注入）
     function showAlert(message, type) {
       const alertContainer = document.getElementById('alertContainer');
       if (!alertContainer) return;
-      
+
       const alertEl = document.createElement('div');
-      alertEl.className = `alert alert-${type}`;
-      alertEl.innerHTML = `
-        <span>${message}</span>
-        <button class="alert-close">&times;</button>
-      `;
-      
+      alertEl.className = `alert alert-${type || 'info'}`;
+
+      const textEl = document.createElement('span');
+      textEl.textContent = String(message == null ? '' : message);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'alert-close';
+      closeBtn.innerHTML = '&times;';
+
+      alertEl.appendChild(textEl);
+      alertEl.appendChild(closeBtn);
       alertContainer.appendChild(alertEl);
-      
-      // 添加关闭按钮事件
-      alertEl.querySelector('.alert-close').addEventListener('click', () => {
+
+      closeBtn.addEventListener('click', () => {
         alertEl.remove();
       });
-      
-      // 5秒后自动移除
+
       setTimeout(() => {
         if (alertEl.parentNode) {
           alertEl.remove();
         }
       }, 5000);
     }
-    
+
     // 按回车键也可以登录/注册
     document.addEventListener('keydown', function(event) {
       if (event.key === 'Enter') {
@@ -2752,29 +2774,32 @@ const csvData = assessments.map(assessment => [
 	
     // 页面加载时初始化
     window.onload = function() {
-      // 初始化用户数据库
-      initUserDatabase();
-      
       // 确保入口页面显示时不能滚动
       document.body.style.overflow = 'hidden';
-      
-      // 检查是否已有登录用户（自动登录）
-      const userData = JSON.parse(sessionStorage.getItem('currentUser') || '{}');
-      if (userData.username && userData.loginTime) {
-        // 检查登录是否过期（24小时）
-        const loginTime = new Date(userData.loginTime);
-        const now = new Date();
-        const hoursDiff = (now - loginTime) / (1000 * 60 * 60);
-        
+
+      // token 失效时回到登录页
+      window.addEventListener('stroke:unauthorized', function(event) {
+        showEntryPage((event.detail && event.detail.message) || '登录已过期，请重新登录');
+      });
+
+      // 已有会话时向服务端确认 token 是否有效（24 小时内自动登录）
+      const storedUser = getCurrentUser();
+      if (API && API.getToken() && storedUser && storedUser.loginTime) {
+        const hoursDiff = (new Date() - new Date(storedUser.loginTime)) / (1000 * 60 * 60);
         if (hoursDiff < 24) {
-          // 自动登录
-          hideEntryPage();
+          API.me().then(function(result) {
+            setCurrentUser(result.user);
+            hideEntryPage();
+          }).catch(function() {
+            API.clearSession();
+            setCurrentUser(null);
+          });
         } else {
-          // 登录过期，清除session
-          sessionStorage.removeItem('currentUser');
+          API.clearSession();
+          setCurrentUser(null);
         }
       }
-      
+
       // 初始化聊天模态框的关闭事件
       const chatModal = document.getElementById('chatRoomModal');
       if (chatModal) {
