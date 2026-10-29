@@ -266,10 +266,12 @@ async function wxLogin(input = {}) {
   const code = input.code == null ? '' : String(input.code).trim();
   if (!code) throw errors.invalid('缺少微信登录凭证');
 
-  const appid = process.env.WX_APPID;
+  // WX_APPID 是公开信息；环境变量偶尔不生效时用内置值兜底。
+  // WX_SECRET 仍必须由云函数环境变量提供。
+  const appid = process.env.WX_APPID || 'wxc765f99f5598f8fa';
   const secret = process.env.WX_SECRET;
-  if (!appid || !secret) {
-    throw errors.internal('服务未配置微信登录参数');
+  if (!secret) {
+    throw errors.internal('服务未配置微信登录参数（缺少 WX_SECRET）');
   }
 
   const url = 'https://api.weixin.qq.com/sns/jscode2session'

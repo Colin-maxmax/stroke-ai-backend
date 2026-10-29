@@ -118,7 +118,18 @@ function clientIp(event, headers) {
 async function dispatch(action, payload, token, meta) {
   switch (action) {
     case 'health':
-      return { status: 'ok', serverTime: new Date().toISOString() };
+      return {
+        status: 'ok',
+        serverTime: new Date().toISOString(),
+        build: 'env-check-1',
+        env: {
+          wxAppIdPresent: !!process.env.WX_APPID,
+          wxAppIdLength: (process.env.WX_APPID || '').length,
+          wxSecretPresent: !!process.env.WX_SECRET,
+          wxSecretLength: (process.env.WX_SECRET || '').length,
+          keys: Object.keys(process.env).filter((key) => /^(WX_|JWT_|ALLOWED_|TOKEN_|BCRYPT_)/.test(key))
+        }
+      };
 
     case 'register':
       return register(payload);
