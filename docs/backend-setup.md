@@ -235,6 +235,7 @@ https://api.example.com
 | 云函数 500 “服务未配置 JWT_SECRET” | 环境变量漏配 |
 | 登录总提示账号或密码错误 | 确认管理员记录已插入、`passwordHash` 完整、`role` 正确 |
 | 小程序登录失败 | `WX_APPID`/`WX_SECRET` 不对，或 AppSecret 已重置 |
+| 数据库写入成功但按字段查不到 | `@cloudbase/node-sdk` 的 `add/set/update` 直接传文档，不能包 `{ data }`（那是 wx-server-sdk 的写法） |
 | 首次请求慢 | 云函数冷启动，前端已做加载态，可忽略 |
 | AI 助手报 `Model not exist` | 本次未处理（历史遗留问题），与账号/同步无关 |
 

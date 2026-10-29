@@ -2,6 +2,15 @@
 
 网站（GitHub Pages）+ 微信小程序共用一套 CloudBase 后端：账号跨设备登录、评估记录云端同步、管理员查看全部、小程序提交后网站约 5 秒内出现。
 
+## 当前部署（A 方案：暂无备案域名）
+
+- CloudBase 环境：`significant-donkey-d5cfzd9b35604`
+- API：`https://significant-donkey-d5cfzd9b35604-1419360854.ap-shanghai.app.tcloudbase.com/api`
+- 网站：`https://colin-maxmax.github.io/stroke-ai-backend/`
+- 小程序：开发版/真机调试需勾选“不校验合法域名”；**体验版/正式版仍需备案域名**
+- 管理员：`admin`（数据库中 `role=admin`）
+- 说明：CloudBase 默认域名仅用于开发/比赛演示；正式上线前需购买域名并完成**网站 ICP 备案**（小程序备案不能替代），再替换 API 地址。
+
 ## 目录
 
 ```
@@ -56,6 +65,16 @@ npm test
 6. 小程序 `utils/config.js` 填 API 地址 + 配置 request 合法域名
 
 接口细节见 [`docs/api.md`](docs/api.md)。
+
+## 上线前收尾
+
+- [ ] 创建 `auth_throttle` 集合（权限 ADMINONLY）
+- [ ] 创建索引：`users.username` 唯一、`users.openid` 普通、`assessments.ownerId+createdAt`、`assessments.createdAt`、`assessments.ownerId+legacyKey`
+- [ ] 删除调试账号/记录（`smoketest_*`、`diag_*`、测试患者记录）
+- [ ] 轮换 `JWT_SECRET`（调试期间曾在聊天中出现），更新云函数环境变量并重新部署
+- [ ] 补隐私政策/知情同意（收集姓名、病史、血压、血糖等敏感信息）
+- [ ] 正式域名备案后：更新 `js/config.js`、小程序 `utils/config.js`，把 `api.<域名>` 加入小程序 request 合法域名
+- [ ] 移除 `health` 里的 env 诊断字段（可选）
 
 ## 已知未处理
 
